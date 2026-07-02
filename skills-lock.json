@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "cmd-ts": {
+      "source": "/Users/alec/dev/skills/typescript",
+      "sourceType": "local",
+      "computedHash": "a5ef801893c5aefe5ab2b89d13ab81e994719ac9c77889673d11c78d810a5724"
+    }
+  }
+}
