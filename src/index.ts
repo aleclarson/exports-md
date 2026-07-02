@@ -5,7 +5,6 @@ import { existsSync, statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { basename, dirname, extname, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { Diagnostic, Statement } from 'typescript'
 
 type TypeScript = typeof import('typescript')
@@ -412,9 +411,6 @@ const app = command({
   },
 })
 
-const currentFile = fileURLToPath(import.meta.url)
-const invokedFile = process.argv[1] ? resolve(process.argv[1]) : undefined
-
-if (invokedFile === currentFile) {
+if (import.meta.main) {
   await run(binary(app), process.argv)
 }
