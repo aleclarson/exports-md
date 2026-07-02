@@ -93,6 +93,52 @@ export { parseValue as parse }
   expect(result.markdown).toContain('declare function parseValue(value: string): number;')
 })
 
+test('includes external re-export declarations', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(join(project, 'types.ts'), 'export interface ExternalInput { value: string }\n')
+  await writeFile(join(project, 'factory.ts'), 'export function makeThing() { return "thing" }\n')
+  await writeFile(join(project, 'wildcard.ts'), 'export interface Wildcarded { ok: true }\n')
+  await writeFile(
+    inputFile,
+    `
+export type { ExternalInput as Input } from './types'
+export { makeThing } from './factory'
+export * from './wildcard'
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, { cwd: project })
+
+  expect(result.markdown).toContain("export type { ExternalInput as Input } from './types';")
+  expect(result.markdown).toContain("export { makeThing } from './factory';")
+  expect(result.markdown).toContain("export * from './wildcard';")
+})
+
+test('filters explicit external re-export declarations by requested symbol', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(join(project, 'types.ts'), 'export interface ExternalInput { value: string }\n')
+  await writeFile(join(project, 'factory.ts'), 'export function makeThing() { return "thing" }\n')
+  await writeFile(
+    inputFile,
+    `
+export type { ExternalInput as Input } from './types'
+export { makeThing } from './factory'
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    symbols: ['makeThing'],
+  })
+
+  expect(result.markdown).toContain("export { makeThing } from './factory';")
+  expect(result.markdown).not.toContain('ExternalInput')
+})
+
 test('includes non-exported local declarations required by requested exports', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')

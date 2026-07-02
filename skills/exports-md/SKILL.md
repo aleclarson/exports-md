@@ -1,6 +1,6 @@
 ---
 name: exports-md
-description: Use when a task needs the exported API surface of a TypeScript module without reading implementation details. Produces agent-friendly Markdown for signatures, exported types, TSDoc, local declaration dependencies, and import references.
+description: Use when a task needs the exported API surface of a TypeScript module without reading implementation details. Produces agent-friendly Markdown for signatures, exported types, TSDoc, local declaration dependencies, import references, and external re-export statements.
 ---
 
 # exports-md
@@ -27,7 +27,7 @@ Query specific exported symbols with positional names after the module path:
 exports-md path/to/module.ts ExportA ExportB
 ```
 
-Symbol queries include the requested exports plus local declaration dependencies needed to understand them. Imported symbols are represented by their import line only; do not expect `exports-md` to recursively expand imported modules.
+Symbol queries include the requested exports plus local declaration dependencies needed to understand them. Imported symbols are represented by their import line only, and external re-exports are represented by their `export ... from` line only; do not expect `exports-md` to recursively expand imported or re-exported modules.
 
 ## Standards
 

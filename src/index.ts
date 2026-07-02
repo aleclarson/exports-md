@@ -10,7 +10,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path'
 import type { Diagnostic, Identifier, SourceFile, Statement } from 'typescript'
 
 type TypeScript = typeof import('typescript')
-const cacheVersion = 1
+const cacheVersion = 2
 const packageVersion = '0.0.0'
 
 export interface GeneratedMarkdown {
@@ -47,6 +47,14 @@ interface DeclarationEntry {
 interface ImportEntry {
   code: string
   importedNames: Set<string>
+  index: number
+  statement: Statement
+}
+
+interface ReExportEntry {
+  code: string
+  exportedNames: Set<string>
+  exportsAll: boolean
   index: number
   statement: Statement
 }
@@ -152,17 +160,30 @@ function declarationToMarkdown(
   requestedSymbols: readonly string[] = [],
 ) {
   const sourceFile = ts.createSourceFile('module.d.ts', declaration, ts.ScriptTarget.Latest, true)
-  const { declarations, imports } = indexDeclarationFile(ts, declaration, sourceFile)
+  const { declarations, imports, reExports } = indexDeclarationFile(ts, declaration, sourceFile)
   const requested = new Set(requestedSymbols)
-  const included = selectDeclarationEntries(ts, declarations, requested)
+  const externalExportNames = new Set(reExports.flatMap((entry) => [...entry.exportedNames]))
+  // `export * from` can satisfy a symbol query, but the emitted line does not reveal its names.
+  const hasUnknownExternalExports = reExports.some((entry) => entry.exportsAll)
+  const included = selectDeclarationEntries(
+    ts,
+    declarations,
+    requested,
+    externalExportNames,
+    hasUnknownExternalExports,
+  )
+  const includedReExports = selectReExportEntries(reExports, requested)
   const importedNames = collectReferencedImportedNames(ts, included, imports, declarations)
   const includedImports = imports.filter((entry) =>
     [...entry.importedNames].some((name) => importedNames.has(name)),
   )
+  const referenceEntries = [...includedImports, ...includedReExports].sort(
+    (left, right) => left.index - right.index,
+  )
   const sections: string[] = [`# ${basename(inputFile)}`]
 
-  if (includedImports.length > 0) {
-    sections.push(renderCodeBlock(includedImports.map((entry) => entry.code).join('\n')))
+  if (referenceEntries.length > 0) {
+    sections.push(renderCodeBlock(referenceEntries.map((entry) => entry.code).join('\n')))
   }
 
   for (const entry of included) {
@@ -243,6 +264,7 @@ function collectExports(ts: TypeScript, sourceFile: SourceFile) {
 
   for (const statement of sourceFile.statements) {
     if (!ts.isExportDeclaration(statement)) continue
+    if (statement.moduleSpecifier) continue
     const clause = statement.exportClause
     if (!clause || !ts.isNamedExports(clause)) continue
 
@@ -259,8 +281,22 @@ function indexDeclarationFile(ts: TypeScript, declaration: string, sourceFile: S
   const exportsByLocalName = collectExports(ts, sourceFile)
   const declarations: DeclarationEntry[] = []
   const imports: ImportEntry[] = []
+  const reExports: ReExportEntry[] = []
 
   sourceFile.statements.forEach((statement, index) => {
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.moduleSpecifier) {
+        reExports.push({
+          code: declaration.slice(statement.getStart(sourceFile), statement.end).trim(),
+          exportedNames: collectExportedNames(ts, statement),
+          exportsAll: !statement.exportClause,
+          index,
+          statement,
+        })
+      }
+      return
+    }
+
     if (ts.isImportDeclaration(statement)) {
       const importedNames = collectImportedNames(ts, statement)
       if (importedNames.size > 0) {
@@ -292,7 +328,27 @@ function indexDeclarationFile(ts: TypeScript, declaration: string, sourceFile: S
   return {
     declarations,
     imports,
+    reExports,
   }
+}
+
+function collectExportedNames(ts: TypeScript, statement: Statement) {
+  const names = new Set<string>()
+  if (!ts.isExportDeclaration(statement)) return names
+
+  const clause = statement.exportClause
+  if (!clause) return names
+
+  if (ts.isNamespaceExport(clause)) {
+    names.add(clause.name.text)
+    return names
+  }
+
+  for (const element of clause.elements) {
+    names.add(element.name.text)
+  }
+
+  return names
 }
 
 function collectImportedNames(ts: TypeScript, statement: Statement) {
@@ -325,6 +381,8 @@ function selectDeclarationEntries(
   ts: TypeScript,
   declarations: DeclarationEntry[],
   requested: ReadonlySet<string>,
+  externalExportNames: ReadonlySet<string> = new Set(),
+  hasUnknownExternalExports = false,
 ) {
   const exportedDeclarations = declarations.filter((entry) => entry.isExported)
   const byLocalName = new Map(declarations.map((entry) => [entry.localName, entry]))
@@ -339,7 +397,12 @@ function selectDeclarationEntries(
         )
 
   for (const symbol of requested) {
-    if (!byExportedName.has(symbol) && !exportedByLocalName.has(symbol)) {
+    if (
+      !byExportedName.has(symbol) &&
+      !exportedByLocalName.has(symbol) &&
+      !externalExportNames.has(symbol) &&
+      !hasUnknownExternalExports
+    ) {
       throw new Error(`Export not found: ${symbol}`)
     }
   }
@@ -359,6 +422,16 @@ function selectDeclarationEntries(
   }
 
   return [...included].sort((left, right) => left.index - right.index)
+}
+
+function selectReExportEntries(reExports: ReExportEntry[], requested: ReadonlySet<string>) {
+  if (requested.size === 0) return reExports
+
+  return reExports.filter(
+    (entry) =>
+      entry.exportsAll ||
+      [...entry.exportedNames].some((exportedName) => requested.has(exportedName)),
+  )
 }
 
 function collectReferencedImportedNames(
