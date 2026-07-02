@@ -35,6 +35,8 @@ Render every declaration entry point from a package export map:
 exports-md package.json
 ```
 
+Package output uses H1 headings based on the package name and export subpath, such as `foo` for `.` and `foo/bar` for `./bar`.
+
 Write package entry docs to a directory when an artifact tree is useful:
 
 ```sh

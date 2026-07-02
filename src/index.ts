@@ -70,6 +70,11 @@ interface PackageMarkdownEntry {
   markdown: string
 }
 
+interface PackageEntryPoint {
+  exportSubpath: string
+  inputFile: string
+}
+
 export async function generateMarkdownForModule(
   modulePath: string,
   options: GenerateMarkdownOptions = {},
@@ -116,13 +121,16 @@ async function generateMarkdownForPackage(
     throw new Error('Symbol filters are only supported for TypeScript module input.')
   }
 
-  const packageRoot = dirname(packageJsonFile)
-  const inputFiles = await readPackageEntryPoints(packageJsonFile)
+  const packageJson = await readPackageJson(packageJsonFile)
+  const packageName = getPackageName(packageJson, packageJsonFile)
+  const entryPoints = readPackageEntryPoints(packageJsonFile, packageJson)
   const entries = await Promise.all(
-    inputFiles.map(async (inputFile): Promise<PackageMarkdownEntry & GeneratedMarkdown> => {
-      const heading = relative(packageRoot, inputFile)
-      return generateMarkdownForDeclarationFile(inputFile, cwd, symbols, heading)
-    }),
+    entryPoints.map(
+      async ({ exportSubpath, inputFile }): Promise<PackageMarkdownEntry & GeneratedMarkdown> => {
+        const heading = getPackageEntryHeading(packageName, exportSubpath)
+        return generateMarkdownForDeclarationFile(inputFile, cwd, symbols, heading)
+      },
+    ),
   )
   const markdown = `${entries
     .map((entry) => entry.markdown.trimEnd())
@@ -261,16 +269,15 @@ function declarationToMarkdown(
   return `${sections.join('\n\n').trimEnd()}\n`
 }
 
-async function readPackageEntryPoints(packageJsonFile: string) {
+function readPackageEntryPoints(packageJsonFile: string, packageJson: { exports?: unknown }) {
   const packageRoot = dirname(packageJsonFile)
-  const packageJson = await readPackageJson(packageJsonFile)
   const exportsField = packageJson.exports
 
   if (exportsField === undefined) {
     throw new Error(`Package exports not found: ${packageJsonFile}`)
   }
 
-  const targets: string[] = []
+  const entryPoints: PackageEntryPoint[] = []
 
   if (isRecord(exportsField) && Object.keys(exportsField).some((key) => key.startsWith('.'))) {
     for (const [subpath, value] of Object.entries(exportsField)) {
@@ -278,29 +285,62 @@ async function readPackageEntryPoints(packageJsonFile: string) {
       if (entryTargets.length === 0) {
         throw new Error(`Could not derive a declaration entry point from exports["${subpath}"].`)
       }
-      targets.push(...entryTargets)
+      for (const target of entryTargets) {
+        entryPoints.push({
+          exportSubpath: subpath,
+          inputFile: resolvePackageTarget(packageRoot, target),
+        })
+      }
     }
   } else {
-    targets.push(...collectDeclarationTargets(exportsField))
+    for (const target of collectDeclarationTargets(exportsField)) {
+      entryPoints.push({
+        exportSubpath: '.',
+        inputFile: resolvePackageTarget(packageRoot, target),
+      })
+    }
   }
 
-  const uniqueTargets = [...new Set(targets)]
-  if (uniqueTargets.length === 0) {
+  if (entryPoints.length === 0) {
     throw new Error(`Could not derive declaration entry points from ${packageJsonFile}`)
   }
 
-  return uniqueTargets.map((target) => resolvePackageTarget(packageRoot, target))
+  const uniqueEntryPoints = new Map(
+    entryPoints.map((entryPoint) => [
+      `${entryPoint.exportSubpath}\0${entryPoint.inputFile}`,
+      entryPoint,
+    ]),
+  )
+
+  return [...uniqueEntryPoints.values()]
 }
 
 async function readPackageJson(packageJsonFile: string) {
   try {
-    return JSON.parse(await readFile(packageJsonFile, 'utf8')) as { exports?: unknown }
+    return JSON.parse(await readFile(packageJsonFile, 'utf8')) as {
+      exports?: unknown
+      name?: unknown
+    }
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new Error(`Invalid package.json: ${packageJsonFile}`)
     }
     throw error
   }
+}
+
+function getPackageName(packageJson: { name?: unknown }, packageJsonFile: string) {
+  if (typeof packageJson.name === 'string' && packageJson.name.length > 0) {
+    return packageJson.name
+  }
+
+  throw new Error(`Package name not found: ${packageJsonFile}`)
+}
+
+function getPackageEntryHeading(packageName: string, exportSubpath: string) {
+  if (exportSubpath === '.') return packageName
+
+  return `${packageName}/${exportSubpath.replace(/^\.\//, '')}`
 }
 
 function collectDeclarationTargets(value: unknown): string[] {

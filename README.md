@@ -56,7 +56,7 @@ exports-md package.json --outDir docs/api
 
 The tool emits declarations in memory, parses the resulting `.d.ts`, and renders Markdown sections from exported declarations and their leading TSDoc comments. When a symbol query is provided, the output includes requested exports plus local declaration dependencies needed to understand their signatures.
 
-When the input is `package.json`, the tool reads the `exports` field and renders each declaration entry point with a separate H1. Export-map entries with `types` targets use those targets. Entries without `types` targets use string `.js` or `.mjs` targets rewritten to `.d.ts`. With `--outDir`, each entry point is written as a `.md` file under the output directory, preserving the entry point folder structure relative to their shared common root.
+When the input is `package.json`, the tool reads the `exports` field and renders each declaration entry point with a separate H1 based on the package name and export subpath, such as `foo` for `.` and `foo/bar` for `./bar`. Export-map entries with `types` targets use those targets. Entries without `types` targets use string `.js` or `.mjs` targets rewritten to `.d.ts`. With `--outDir`, each entry point is written as a `.md` file under the output directory, preserving the entry point folder structure relative to their shared common root.
 
 Imported symbols and external re-exports are not expanded recursively. If a rendered declaration references an imported name, the relevant import line is included in the Markdown output. If the module re-exports from another module, the relevant `export ... from` line is included instead.
 

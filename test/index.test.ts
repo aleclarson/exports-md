@@ -164,6 +164,7 @@ export interface FeatureOptions {
     packageJson,
     JSON.stringify(
       {
+        name: 'foo',
         exports: {
           '.': {
             types: './dist/index.d.ts',
@@ -180,9 +181,9 @@ export interface FeatureOptions {
   const result = await generateMarkdownForModule(packageJson, { cwd: project })
 
   expect(result.inputFile).toBe(packageJson)
-  expect(result.markdown).toContain('# dist/index.d.ts')
+  expect(result.markdown).toMatch(/^# foo$/m)
   expect(result.markdown).toContain('## `createMain`')
-  expect(result.markdown).toContain('# dist/feature.d.ts')
+  expect(result.markdown).toMatch(/^# foo\/feature$/m)
   expect(result.markdown).toContain('## `FeatureOptions`')
 })
 
@@ -209,6 +210,7 @@ export declare function createExtra(): string
     packageJson,
     JSON.stringify(
       {
+        name: 'foo',
         exports: {
           '.': './dist/index.js',
           './extra': './dist/features/extra.mjs',
@@ -227,9 +229,9 @@ export declare function createExtra(): string
   const indexOutput = await readFile(join(project, 'docs', 'api', 'index.md'), 'utf8')
   const extraOutput = await readFile(join(project, 'docs', 'api', 'features', 'extra.md'), 'utf8')
 
-  expect(indexOutput).toContain('# dist/index.d.ts')
+  expect(indexOutput).toMatch(/^# foo$/m)
   expect(indexOutput).toContain('## `createMain`')
-  expect(extraOutput).toContain('# dist/features/extra.d.ts')
+  expect(extraOutput).toMatch(/^# foo\/extra$/m)
   expect(extraOutput).toContain('## `createExtra`')
 })
 
