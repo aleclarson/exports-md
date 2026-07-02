@@ -1,6 +1,6 @@
 ---
 name: exports-md
-description: Use when a task needs Markdown context for a TypeScript module's exported API surface, especially signatures, exported types, TSDoc, local declaration dependencies, or import references without reading implementation details.
+description: Use when a task needs the exported API surface of a TypeScript module without reading implementation details. Produces agent-friendly Markdown for signatures, exported types, TSDoc, local declaration dependencies, and import references.
 ---
 
 # exports-md
