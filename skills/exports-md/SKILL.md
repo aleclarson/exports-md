@@ -1,6 +1,6 @@
 ---
 name: exports-md
-description: Use when Codex needs to inspect or summarize the exported API surface of a TypeScript module without reading implementation details. Applies to tasks involving `.ts`, `.mts`, `.cts`, or `.tsx` modules where exported declarations, TSDoc comments, local type dependencies, or import references are needed as Markdown context.
+description: Use when a task needs Markdown context for a TypeScript module's exported API surface, especially signatures, exported types, TSDoc, local declaration dependencies, or import references without reading implementation details.
 ---
 
 # exports-md
