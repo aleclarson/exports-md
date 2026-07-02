@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findNearestTypescript, generateMarkdownForModule } from '../src/index'
@@ -35,9 +35,10 @@ const hidden = true
   )
 
   const result = await generateMarkdownForModule(inputFile, { cwd: project })
-  const output = await readFile(join(project, 'api.md'), 'utf8')
+  const output = result.markdown
 
-  expect(result.outputFile).toBe(join(project, 'api.md'))
+  expect(result.fromCache).toBe(false)
+  expect(existsSync(join(project, 'api.md'))).toBe(false)
   expect(output).toContain('# api.ts')
   expect(output).toContain('## `greet`')
   expect(output).toContain('Greets a user.')
@@ -49,6 +50,20 @@ const hidden = true
   expect(output).not.toContain('\n Available output modes.')
   expect(output).toContain("export type OutputMode = 'short' | 'long';")
   expect(output).not.toContain('hidden')
+})
+
+test('reuses cached markdown for unchanged inputs', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+  await writeFile(inputFile, '/** The answer. */\nexport const answer = 42\n')
+
+  await expect(generateMarkdownForModule(inputFile, { cwd: project })).resolves.toMatchObject({
+    fromCache: false,
+  })
+  await expect(generateMarkdownForModule(inputFile, { cwd: project })).resolves.toMatchObject({
+    fromCache: true,
+    markdown: expect.stringContaining('The answer.'),
+  })
 })
 
 test('documents symbols exported through an export list', async () => {
@@ -78,6 +93,92 @@ export { parseValue as parse }
   expect(result.markdown).toContain('declare function parseValue(value: string): number;')
 })
 
+test('includes non-exported local declarations required by requested exports', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+/** Internal input shape. */
+interface InternalInput {
+  value: string
+}
+
+/** Parses a raw value. */
+function parseValue(value: InternalInput): number {
+  return Number(value.value)
+}
+
+export { parseValue as parse }
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    symbols: ['parse'],
+  })
+
+  expect(result.markdown).toContain('## `InternalInput`')
+  expect(result.markdown).toContain('Internal input shape.')
+  expect(result.markdown).toContain('## `parse`')
+  expect(result.markdown).toContain('declare function parseValue(value: InternalInput): number;')
+})
+
+test('filters requested symbols and includes local dependencies plus import lines', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+  const typesFile = join(project, 'types.ts')
+
+  await writeFile(typesFile, 'export interface ExternalInput { value: string }\n')
+  await writeFile(
+    inputFile,
+    `
+import type { ExternalInput } from './types'
+
+/** Internal options. */
+export interface Options {
+  value: string
+}
+
+/** Creates an options value. */
+export function createOptions(input: ExternalInput): Options {
+  return { value: input.value }
+}
+
+/** Not requested. */
+export function unused(): string {
+  return 'unused'
+}
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    symbols: ['createOptions'],
+  })
+
+  expect(result.markdown).toContain("import type { ExternalInput } from './types';")
+  expect(result.markdown).toContain('## `Options`')
+  expect(result.markdown).toContain('Internal options.')
+  expect(result.markdown).toContain('## `createOptions`')
+  expect(result.markdown).toContain('ExternalInput')
+  expect(result.markdown).not.toContain('unused')
+})
+
+test('fails clearly when a requested export is missing', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+  await writeFile(inputFile, '/** The answer. */\nexport const answer = 42\n')
+
+  await expect(
+    generateMarkdownForModule(inputFile, {
+      cwd: project,
+      symbols: ['missing'],
+    }),
+  ).rejects.toThrow('Export not found: missing')
+})
+
 test('uses TypeScript from the nearest node_modules under the current working directory', async () => {
   const project = await createProject()
   const nested = join(project, 'packages', 'demo')
@@ -87,7 +188,7 @@ test('uses TypeScript from the nearest node_modules under the current working di
 
   expect(findNearestTypescript(nested)).toBe(join(project, 'node_modules', 'typescript'))
   await expect(generateMarkdownForModule(inputFile, { cwd: nested })).resolves.toMatchObject({
-    outputFile: join(project, 'api.md'),
+    inputFile,
   })
 })
 

@@ -1,23 +1,28 @@
 #!/usr/bin/env node
-import { binary, command, positional, run } from 'cmd-ts'
+import { binary, command, positional, restPositionals, run, string } from 'cmd-ts'
 import { File } from 'cmd-ts/batteries/fs'
-import { existsSync, statSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { basename, dirname, extname, join, relative, resolve } from 'node:path'
-import type { Diagnostic, Statement } from 'typescript'
+import { tmpdir } from 'node:os'
+import { basename, dirname, extname, join, resolve } from 'node:path'
+import type { Diagnostic, Identifier, SourceFile, Statement } from 'typescript'
 
 type TypeScript = typeof import('typescript')
+const cacheVersion = 1
+const packageVersion = '0.0.0'
 
 export interface GeneratedMarkdown {
   declaration: string
+  fromCache: boolean
   inputFile: string
   markdown: string
-  outputFile: string
 }
 
 export interface GenerateMarkdownOptions {
   cwd?: string
+  symbols?: string[]
 }
 
 interface TsDocTag {
@@ -30,6 +35,27 @@ interface TsDoc {
   tags: TsDocTag[]
 }
 
+interface DeclarationEntry {
+  code: string
+  exportedName: string
+  index: number
+  isExported: boolean
+  localName: string
+  statement: Statement
+}
+
+interface ImportEntry {
+  code: string
+  importedNames: Set<string>
+  index: number
+  statement: Statement
+}
+
+interface CachedMarkdown {
+  declaration: string
+  markdown: string
+}
+
 export async function generateMarkdownForModule(
   modulePath: string,
   options: GenerateMarkdownOptions = {},
@@ -37,19 +63,29 @@ export async function generateMarkdownForModule(
   const cwd = resolve(options.cwd ?? process.cwd())
   const inputFile = resolve(cwd, modulePath)
   assertTypeScriptModule(inputFile)
+  const symbols = normalizeSymbols(options.symbols ?? [])
+  const cacheFile = await getCacheFile(inputFile, cwd, symbols)
+  const cached = await readCache(cacheFile)
+  if (cached) {
+    return {
+      declaration: cached.declaration,
+      fromCache: true,
+      inputFile,
+      markdown: cached.markdown,
+    }
+  }
 
   const ts = loadWorkspaceTypescript(cwd)
   const declaration = compileDeclaration(ts, inputFile, cwd)
-  const markdown = declarationToMarkdown(ts, declaration, inputFile)
-  const outputFile = getMarkdownPath(inputFile)
+  const markdown = declarationToMarkdown(ts, declaration, inputFile, symbols)
 
-  await writeFile(outputFile, markdown)
+  await writeCache(cacheFile, { declaration, markdown })
 
   return {
     declaration,
+    fromCache: false,
     inputFile,
     markdown,
-    outputFile,
   }
 }
 
@@ -109,25 +145,35 @@ function compileDeclaration(ts: TypeScript, inputFile: string, cwd = process.cwd
   return declaration
 }
 
-function declarationToMarkdown(ts: TypeScript, declaration: string, inputFile: string) {
+function declarationToMarkdown(
+  ts: TypeScript,
+  declaration: string,
+  inputFile: string,
+  requestedSymbols: readonly string[] = [],
+) {
   const sourceFile = ts.createSourceFile('module.d.ts', declaration, ts.ScriptTarget.Latest, true)
-  const exportsByLocalName = collectExports(ts, sourceFile)
-  const hasExplicitExports = exportsByLocalName.size > 0
+  const { declarations, imports } = indexDeclarationFile(ts, declaration, sourceFile)
+  const requested = new Set(requestedSymbols)
+  const included = selectDeclarationEntries(ts, declarations, requested)
+  const importedNames = collectReferencedImportedNames(ts, included, imports, declarations)
+  const includedImports = imports.filter((entry) =>
+    [...entry.importedNames].some((name) => importedNames.has(name)),
+  )
   const sections: string[] = [`# ${basename(inputFile)}`]
 
-  for (const statement of sourceFile.statements) {
+  if (includedImports.length > 0) {
+    sections.push(renderCodeBlock(includedImports.map((entry) => entry.code).join('\n')))
+  }
+
+  for (const entry of included) {
+    const { statement } = entry
     const localName = getStatementName(ts, statement)
     if (!localName) continue
 
-    const exportedName = exportsByLocalName.get(localName) ?? localName
-    const isExported = hasExportModifier(ts, statement) || exportsByLocalName.has(localName)
-    if (hasExplicitExports && !isExported) continue
-
-    const code = declaration.slice(statement.getStart(sourceFile), statement.end).trim()
     const comment = getLeadingTsDoc(ts, declaration, statement)
     const docs = comment ? renderTsDoc(parseTsDoc(comment)) : ''
 
-    sections.push(renderDeclarationSection(exportedName, docs, code))
+    sections.push(renderDeclarationSection(entry.exportedName, docs, entry.code))
   }
 
   return `${sections.join('\n\n').trimEnd()}\n`
@@ -192,7 +238,7 @@ function throwOnDiagnostics(ts: TypeScript, diagnostics: readonly Diagnostic[], 
   )
 }
 
-function collectExports(ts: TypeScript, sourceFile: ReturnType<TypeScript['createSourceFile']>) {
+function collectExports(ts: TypeScript, sourceFile: SourceFile) {
   const exportsByLocalName = new Map<string, string>()
 
   for (const statement of sourceFile.statements) {
@@ -207,6 +253,148 @@ function collectExports(ts: TypeScript, sourceFile: ReturnType<TypeScript['creat
   }
 
   return exportsByLocalName
+}
+
+function indexDeclarationFile(ts: TypeScript, declaration: string, sourceFile: SourceFile) {
+  const exportsByLocalName = collectExports(ts, sourceFile)
+  const declarations: DeclarationEntry[] = []
+  const imports: ImportEntry[] = []
+
+  sourceFile.statements.forEach((statement, index) => {
+    if (ts.isImportDeclaration(statement)) {
+      const importedNames = collectImportedNames(ts, statement)
+      if (importedNames.size > 0) {
+        imports.push({
+          code: declaration.slice(statement.getStart(sourceFile), statement.end).trim(),
+          importedNames,
+          index,
+          statement,
+        })
+      }
+      return
+    }
+
+    const localName = getStatementName(ts, statement)
+    if (!localName) return
+
+    const exportedName = exportsByLocalName.get(localName) ?? localName
+    const isExported = hasExportModifier(ts, statement) || exportsByLocalName.has(localName)
+    declarations.push({
+      code: declaration.slice(statement.getStart(sourceFile), statement.end).trim(),
+      exportedName,
+      index,
+      isExported,
+      localName,
+      statement,
+    })
+  })
+
+  return {
+    declarations,
+    imports,
+  }
+}
+
+function collectImportedNames(ts: TypeScript, statement: Statement) {
+  const names = new Set<string>()
+  if (!ts.isImportDeclaration(statement)) return names
+
+  const clause = statement.importClause
+  if (!clause) return names
+
+  if (clause.name) {
+    names.add(clause.name.text)
+  }
+
+  const bindings = clause.namedBindings
+  if (!bindings) return names
+
+  if (ts.isNamespaceImport(bindings)) {
+    names.add(bindings.name.text)
+    return names
+  }
+
+  for (const element of bindings.elements) {
+    names.add(element.name.text)
+  }
+
+  return names
+}
+
+function selectDeclarationEntries(
+  ts: TypeScript,
+  declarations: DeclarationEntry[],
+  requested: ReadonlySet<string>,
+) {
+  const exportedDeclarations = declarations.filter((entry) => entry.isExported)
+  const byLocalName = new Map(declarations.map((entry) => [entry.localName, entry]))
+  const exportedByLocalName = new Map(exportedDeclarations.map((entry) => [entry.localName, entry]))
+  const byExportedName = new Map(exportedDeclarations.map((entry) => [entry.exportedName, entry]))
+  const included = new Set<DeclarationEntry>()
+  const pending =
+    requested.size === 0
+      ? [...exportedDeclarations]
+      : [...requested].map(
+          (symbol) => byExportedName.get(symbol) ?? exportedByLocalName.get(symbol),
+        )
+
+  for (const symbol of requested) {
+    if (!byExportedName.has(symbol) && !exportedByLocalName.has(symbol)) {
+      throw new Error(`Export not found: ${symbol}`)
+    }
+  }
+
+  while (pending.length > 0) {
+    const entry = pending.pop()
+    if (!entry || included.has(entry)) continue
+
+    included.add(entry)
+
+    for (const identifier of collectIdentifiers(ts, entry.statement)) {
+      const dependency = byLocalName.get(identifier.text)
+      if (dependency && dependency !== entry && !included.has(dependency)) {
+        pending.push(dependency)
+      }
+    }
+  }
+
+  return [...included].sort((left, right) => left.index - right.index)
+}
+
+function collectReferencedImportedNames(
+  ts: TypeScript,
+  declarations: DeclarationEntry[],
+  imports: ImportEntry[],
+  localDeclarations: DeclarationEntry[],
+) {
+  const importedNames = new Set(imports.flatMap((entry) => [...entry.importedNames]))
+  const localNames = new Set(localDeclarations.map((entry) => entry.localName))
+  const referenced = new Set<string>()
+
+  for (const declaration of declarations) {
+    for (const identifier of collectIdentifiers(ts, declaration.statement)) {
+      if (importedNames.has(identifier.text) && !localNames.has(identifier.text)) {
+        referenced.add(identifier.text)
+      }
+    }
+  }
+
+  return referenced
+}
+
+function collectIdentifiers(ts: TypeScript, statement: Statement) {
+  const identifiers: Identifier[] = []
+
+  function visit(node: Parameters<typeof ts.forEachChild>[0]) {
+    if (ts.isIdentifier(node)) {
+      identifiers.push(node)
+    }
+
+    ts.forEachChild(node, visit)
+  }
+
+  ts.forEachChild(statement, visit)
+  return identifiers
 }
 
 function getStatementName(ts: TypeScript, statement: Statement) {
@@ -349,12 +537,65 @@ function renderNamedTags(title: string, tags: TsDocTag[]) {
 }
 
 function renderDeclarationSection(name: string, docs: string, code: string) {
-  return [`## \`${name}\``, docs, `\`\`\`ts\n${code}\n\`\`\``].filter(Boolean).join('\n\n')
+  return [`## \`${name}\``, docs, renderCodeBlock(code)].filter(Boolean).join('\n\n')
 }
 
-function getMarkdownPath(inputFile: string) {
-  const extension = extname(inputFile)
-  return `${inputFile.slice(0, -extension.length)}.md`
+function renderCodeBlock(code: string) {
+  return `\`\`\`ts\n${code}\n\`\`\``
+}
+
+async function getCacheFile(inputFile: string, cwd: string, symbols: readonly string[]) {
+  const source = await readFile(inputFile, 'utf8')
+  const configPath = findTsConfig(inputFile, cwd)
+  const config = configPath ? readFileSync(configPath, 'utf8') : ''
+  const hash = createHash('sha256')
+    .update(packageVersion)
+    .update('\0')
+    .update(cacheVersion.toString())
+    .update('\0')
+    .update(inputFile)
+    .update('\0')
+    .update(source)
+    .update('\0')
+    .update(configPath ?? '')
+    .update('\0')
+    .update(config)
+    .update('\0')
+    .update(JSON.stringify(symbols))
+    .digest('hex')
+
+  return join(tmpdir(), 'exports-md', `${hash}.json`)
+}
+
+function findTsConfig(inputFile: string, cwd: string) {
+  let dir = dirname(inputFile)
+  const stop = dirname(resolve(cwd))
+
+  while (true) {
+    const candidate = join(dir, 'tsconfig.json')
+    if (isFile(candidate)) return candidate
+
+    const parent = dirname(dir)
+    if (dir === parent || dir === stop) return undefined
+    dir = parent
+  }
+}
+
+async function readCache(file: string): Promise<CachedMarkdown | undefined> {
+  try {
+    return JSON.parse(await readFile(file, 'utf8')) as CachedMarkdown
+  } catch {
+    return undefined
+  }
+}
+
+async function writeCache(file: string, data: CachedMarkdown) {
+  mkdirSync(dirname(file), { recursive: true })
+  await writeFile(file, JSON.stringify(data))
+}
+
+function normalizeSymbols(symbols: readonly string[]) {
+  return symbols.map((symbol) => symbol.trim()).filter(Boolean)
 }
 
 function trimBlankEdges(lines: string[]) {
@@ -397,17 +638,22 @@ function isDirectory(path: string) {
 
 const app = command({
   name: 'exports-md',
-  description: 'Generate Markdown docs next to a TypeScript module.',
+  description: 'Print Markdown docs for TypeScript module exports.',
   args: {
     module: positional({
       type: File,
       displayName: 'module.ts',
       description: 'TypeScript module to document.',
     }),
+    symbols: restPositionals({
+      type: string,
+      displayName: 'symbol',
+      description: 'Export symbol names to include.',
+    }),
   },
-  async handler({ module }) {
-    const result = await generateMarkdownForModule(module)
-    console.log(`Wrote ${relative(process.cwd(), result.outputFile)}`)
+  async handler({ module, symbols }) {
+    const result = await generateMarkdownForModule(module, { symbols })
+    process.stdout.write(result.markdown)
   },
 })
 

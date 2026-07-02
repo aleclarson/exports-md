@@ -4,12 +4,13 @@
 // #region Interfaces
 export interface GeneratedMarkdown {
   declaration: string;
+  fromCache: boolean;
   inputFile: string;
   markdown: string;
-  outputFile: string;
 }
 export interface GenerateMarkdownOptions {
   cwd?: string;
+  symbols?: string[];
 }
 // #endregion
 
