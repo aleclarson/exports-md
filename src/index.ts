@@ -10,7 +10,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import type { Diagnostic, Identifier, SourceFile, Statement } from 'typescript'
 
 type TypeScript = typeof import('typescript')
-const cacheVersion = 4
+const cacheVersion = 5
 const packageVersion = '0.0.0'
 
 export interface GeneratedMarkdown {
@@ -255,20 +255,37 @@ function declarationToMarkdown(
     sections.push(renderCodeBlock(referenceEntries.map((entry) => entry.code).join('\n')))
   }
 
-  for (const entry of included) {
+  for (const entries of groupDeclarationEntries(included)) {
+    const entry = entries[0]!
     const { statement } = entry
     const localName = getStatementName(ts, statement)
     if (!localName) continue
 
-    const comment = getLeadingTsDoc(ts, declaration, statement)
+    const documentedEntry =
+      entries.find((entry) => getLeadingTsDoc(ts, declaration, entry.statement)) ?? entry
+    const comment = getLeadingTsDoc(ts, declaration, documentedEntry.statement)
     const docs = comment ? renderTsDoc(parseTsDoc(comment)) : ''
+    const code = entries.map((entry) => renderDeclarationCode(ts, entry)).join('\n')
 
-    sections.push(
-      renderDeclarationSection(entry.exportedName, docs, renderDeclarationCode(ts, entry)),
-    )
+    sections.push(renderDeclarationSection(entry.exportedName, docs, code))
   }
 
   return `${sections.join('\n\n').trimEnd()}\n`
+}
+
+function groupDeclarationEntries(entries: DeclarationEntry[]) {
+  const groups = new Map<string, DeclarationEntry[]>()
+
+  for (const entry of entries) {
+    const group = groups.get(entry.exportedName)
+    if (group) {
+      group.push(entry)
+    } else {
+      groups.set(entry.exportedName, [entry])
+    }
+  }
+
+  return [...groups.values()]
 }
 
 function renderDeclarationCode(ts: TypeScript, entry: DeclarationEntry) {

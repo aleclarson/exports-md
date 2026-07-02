@@ -148,6 +148,55 @@ export { createDefault as default }
   expect(result.markdown).not.toContain('declare function createDefault')
 })
 
+test('groups overloaded declarations into one exported section', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+interface ReadableSigma<TState extends object> {
+  value: TState
+}
+
+interface PersistenceHandle {
+  stop(): void
+}
+
+type PickPersistOptions<TState extends object, TKey extends keyof TState> = {
+  keys: TKey[]
+}
+
+type PersistOptions<TState extends object, TStored> = {
+  serialize(state: TState): TStored
+}
+
+/**
+ * Persists future committed state changes for one sigma instance.
+ */
+export function persist<TState extends object, TKey extends keyof TState>(
+  instance: ReadableSigma<TState>,
+  options: PickPersistOptions<TState, TKey>,
+): PersistenceHandle
+export function persist<TState extends object, TStored = TState>(
+  instance: ReadableSigma<TState>,
+  options: PersistOptions<TState, TStored>,
+): PersistenceHandle
+export function persist(_instance: ReadableSigma<object>, _options: object): PersistenceHandle {
+  return { stop() {} }
+}
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, { cwd: project })
+
+  expect(result.markdown.match(/## `persist`/g)).toHaveLength(1)
+  expect(result.markdown).toContain(
+    'Persists future committed state changes for one sigma instance.',
+  )
+  expect(result.markdown.match(/export function persist/g)).toHaveLength(2)
+})
+
 test('includes external re-export declarations', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
