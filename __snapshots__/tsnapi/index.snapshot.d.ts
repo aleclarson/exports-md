@@ -10,6 +10,7 @@ export interface GeneratedMarkdown {
 }
 export interface GenerateMarkdownOptions {
   cwd?: string;
+  outDir?: string;
   symbols?: string[];
 }
 // #endregion

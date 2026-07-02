@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-import { binary, command, positional, restPositionals, run, string } from 'cmd-ts'
+import { binary, command, option, optional, positional, restPositionals, run, string } from 'cmd-ts'
 import { File } from 'cmd-ts/batteries/fs'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { basename, dirname, extname, join, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { Diagnostic, Identifier, SourceFile, Statement } from 'typescript'
 
 type TypeScript = typeof import('typescript')
-const cacheVersion = 2
+const cacheVersion = 3
 const packageVersion = '0.0.0'
 
 export interface GeneratedMarkdown {
@@ -22,6 +22,7 @@ export interface GeneratedMarkdown {
 
 export interface GenerateMarkdownOptions {
   cwd?: string
+  outDir?: string
   symbols?: string[]
 }
 
@@ -64,37 +65,28 @@ interface CachedMarkdown {
   markdown: string
 }
 
+interface PackageMarkdownEntry {
+  inputFile: string
+  markdown: string
+}
+
 export async function generateMarkdownForModule(
   modulePath: string,
   options: GenerateMarkdownOptions = {},
 ): Promise<GeneratedMarkdown> {
   const cwd = resolve(options.cwd ?? process.cwd())
   const inputFile = resolve(cwd, modulePath)
-  assertTypeScriptModule(inputFile)
   const symbols = normalizeSymbols(options.symbols ?? [])
-  const cacheFile = await getCacheFile(inputFile, cwd, symbols)
-  const cached = await readCache(cacheFile)
-  if (cached) {
-    return {
-      declaration: cached.declaration,
-      fromCache: true,
-      inputFile,
-      markdown: cached.markdown,
-    }
+
+  if (isPackageJson(inputFile)) {
+    return generateMarkdownForPackage(inputFile, cwd, symbols, options.outDir)
   }
 
-  const ts = loadWorkspaceTypescript(cwd)
-  const declaration = compileDeclaration(ts, inputFile, cwd)
-  const markdown = declarationToMarkdown(ts, declaration, inputFile, symbols)
-
-  await writeCache(cacheFile, { declaration, markdown })
-
-  return {
-    declaration,
-    fromCache: false,
-    inputFile,
-    markdown,
+  if (options.outDir) {
+    throw new Error('--outDir is only supported for package.json input.')
   }
+
+  return generateMarkdownForDeclarationFile(inputFile, cwd, symbols)
 }
 
 export function findNearestTypescript(startDir = process.cwd()) {
@@ -111,6 +103,75 @@ export function findNearestTypescript(startDir = process.cwd()) {
       throw new Error(`Could not find node_modules/typescript from ${startDir}`)
     }
     dir = parent
+  }
+}
+
+async function generateMarkdownForPackage(
+  packageJsonFile: string,
+  cwd: string,
+  symbols: readonly string[],
+  outDir?: string,
+): Promise<GeneratedMarkdown> {
+  if (symbols.length > 0) {
+    throw new Error('Symbol filters are only supported for TypeScript module input.')
+  }
+
+  const packageRoot = dirname(packageJsonFile)
+  const inputFiles = await readPackageEntryPoints(packageJsonFile)
+  const entries = await Promise.all(
+    inputFiles.map(async (inputFile): Promise<PackageMarkdownEntry & GeneratedMarkdown> => {
+      const heading = relative(packageRoot, inputFile)
+      return generateMarkdownForDeclarationFile(inputFile, cwd, symbols, heading)
+    }),
+  )
+  const markdown = `${entries
+    .map((entry) => entry.markdown.trimEnd())
+    .join('\n\n')
+    .trimEnd()}\n`
+
+  if (outDir) {
+    await writePackageMarkdownFiles(entries, resolve(cwd, outDir))
+  }
+
+  return {
+    declaration: entries.map((entry) => entry.declaration).join('\n\n'),
+    fromCache: entries.every((entry) => entry.fromCache),
+    inputFile: packageJsonFile,
+    markdown,
+  }
+}
+
+async function generateMarkdownForDeclarationFile(
+  inputFile: string,
+  cwd: string,
+  symbols: readonly string[],
+  heading = basename(inputFile),
+): Promise<GeneratedMarkdown> {
+  assertTypeScriptModule(inputFile)
+  const cacheFile = await getCacheFile(inputFile, cwd, symbols, heading)
+  const cached = await readCache(cacheFile)
+  if (cached) {
+    return {
+      declaration: cached.declaration,
+      fromCache: true,
+      inputFile,
+      markdown: cached.markdown,
+    }
+  }
+
+  const ts = loadWorkspaceTypescript(cwd)
+  const declaration = isDeclarationFile(inputFile)
+    ? await readFile(inputFile, 'utf8')
+    : compileDeclaration(ts, inputFile, cwd)
+  const markdown = declarationToMarkdown(ts, declaration, heading, symbols)
+
+  await writeCache(cacheFile, { declaration, markdown })
+
+  return {
+    declaration,
+    fromCache: false,
+    inputFile,
+    markdown,
   }
 }
 
@@ -156,7 +217,7 @@ function compileDeclaration(ts: TypeScript, inputFile: string, cwd = process.cwd
 function declarationToMarkdown(
   ts: TypeScript,
   declaration: string,
-  inputFile: string,
+  heading: string,
   requestedSymbols: readonly string[] = [],
 ) {
   const sourceFile = ts.createSourceFile('module.d.ts', declaration, ts.ScriptTarget.Latest, true)
@@ -180,7 +241,7 @@ function declarationToMarkdown(
   const referenceEntries = [...includedImports, ...includedReExports].sort(
     (left, right) => left.index - right.index,
   )
-  const sections: string[] = [`# ${basename(inputFile)}`]
+  const sections: string[] = [`# ${heading}`]
 
   if (referenceEntries.length > 0) {
     sections.push(renderCodeBlock(referenceEntries.map((entry) => entry.code).join('\n')))
@@ -198,6 +259,151 @@ function declarationToMarkdown(
   }
 
   return `${sections.join('\n\n').trimEnd()}\n`
+}
+
+async function readPackageEntryPoints(packageJsonFile: string) {
+  const packageRoot = dirname(packageJsonFile)
+  const packageJson = await readPackageJson(packageJsonFile)
+  const exportsField = packageJson.exports
+
+  if (exportsField === undefined) {
+    throw new Error(`Package exports not found: ${packageJsonFile}`)
+  }
+
+  const targets: string[] = []
+
+  if (isRecord(exportsField) && Object.keys(exportsField).some((key) => key.startsWith('.'))) {
+    for (const [subpath, value] of Object.entries(exportsField)) {
+      const entryTargets = collectDeclarationTargets(value)
+      if (entryTargets.length === 0) {
+        throw new Error(`Could not derive a declaration entry point from exports["${subpath}"].`)
+      }
+      targets.push(...entryTargets)
+    }
+  } else {
+    targets.push(...collectDeclarationTargets(exportsField))
+  }
+
+  const uniqueTargets = [...new Set(targets)]
+  if (uniqueTargets.length === 0) {
+    throw new Error(`Could not derive declaration entry points from ${packageJsonFile}`)
+  }
+
+  return uniqueTargets.map((target) => resolvePackageTarget(packageRoot, target))
+}
+
+async function readPackageJson(packageJsonFile: string) {
+  try {
+    return JSON.parse(await readFile(packageJsonFile, 'utf8')) as { exports?: unknown }
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(`Invalid package.json: ${packageJsonFile}`)
+    }
+    throw error
+  }
+}
+
+function collectDeclarationTargets(value: unknown): string[] {
+  if (typeof value === 'string') {
+    const declarationTarget = toDeclarationTarget(value)
+    return declarationTarget ? [declarationTarget] : []
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectDeclarationTargets(item))
+  }
+
+  if (!isRecord(value)) return []
+
+  if (typeof value.types === 'string') {
+    return [value.types]
+  }
+
+  return Object.entries(value).flatMap(([key, nested]) =>
+    key === 'types' ? [] : collectDeclarationTargets(nested),
+  )
+}
+
+function toDeclarationTarget(target: string) {
+  if (isDeclarationFile(target) || ['.ts', '.mts', '.cts', '.tsx'].includes(extname(target))) {
+    return target
+  }
+
+  if (target.endsWith('.js')) {
+    return `${target.slice(0, -'.js'.length)}.d.ts`
+  }
+
+  if (target.endsWith('.mjs')) {
+    return `${target.slice(0, -'.mjs'.length)}.d.ts`
+  }
+}
+
+function resolvePackageTarget(packageRoot: string, target: string) {
+  if (!target.startsWith('./')) {
+    throw new Error(`Package export target must be relative to the package root: ${target}`)
+  }
+
+  return resolve(packageRoot, target)
+}
+
+async function writePackageMarkdownFiles(entries: PackageMarkdownEntry[], outDir: string) {
+  const commonRoot = getCommonRoot(entries.map((entry) => entry.inputFile))
+
+  await Promise.all(
+    entries.map(async (entry) => {
+      const outputFile = join(
+        outDir,
+        replaceEntryPointExtension(relative(commonRoot, entry.inputFile)),
+      )
+      mkdirSync(dirname(outputFile), { recursive: true })
+      await writeFile(outputFile, entry.markdown)
+    }),
+  )
+}
+
+function getCommonRoot(paths: readonly string[]) {
+  if (paths.length === 0) {
+    throw new Error('Cannot find a common root without entry points.')
+  }
+
+  let common = dirname(paths[0]!)
+
+  for (const path of paths.slice(1)) {
+    const directory = dirname(path)
+    while (!isSameOrChildPath(common, directory)) {
+      const parent = dirname(common)
+      if (parent === common) return common
+      common = parent
+    }
+  }
+
+  return common
+}
+
+function isSameOrChildPath(parent: string, child: string) {
+  const path = relative(parent, child)
+  return path === '' || (!path.startsWith('..') && !isAbsolute(path))
+}
+
+function replaceEntryPointExtension(path: string) {
+  if (path.endsWith('.d.ts')) {
+    return `${path.slice(0, -'.d.ts'.length)}.md`
+  }
+
+  if (path.endsWith('.d.mts')) {
+    return `${path.slice(0, -'.d.mts'.length)}.md`
+  }
+
+  if (path.endsWith('.d.cts')) {
+    return `${path.slice(0, -'.d.cts'.length)}.md`
+  }
+
+  const extension = extname(path)
+  return `${path.slice(0, -extension.length)}.md`
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function assertTypeScriptModule(inputFile: string) {
@@ -617,7 +823,12 @@ function renderCodeBlock(code: string) {
   return `\`\`\`ts\n${code}\n\`\`\``
 }
 
-async function getCacheFile(inputFile: string, cwd: string, symbols: readonly string[]) {
+async function getCacheFile(
+  inputFile: string,
+  cwd: string,
+  symbols: readonly string[],
+  heading: string,
+) {
   const source = await readFile(inputFile, 'utf8')
   const configPath = findTsConfig(inputFile, cwd)
   const config = configPath ? readFileSync(configPath, 'utf8') : ''
@@ -635,6 +846,8 @@ async function getCacheFile(inputFile: string, cwd: string, symbols: readonly st
     .update(config)
     .update('\0')
     .update(JSON.stringify(symbols))
+    .update('\0')
+    .update(heading)
     .digest('hex')
 
   return join(tmpdir(), 'exports-md', `${hash}.json`)
@@ -693,6 +906,14 @@ function samePath(ts: TypeScript, left: string, right: string) {
   return normalize(left) === normalize(right)
 }
 
+function isPackageJson(path: string) {
+  return basename(path) === 'package.json'
+}
+
+function isDeclarationFile(path: string) {
+  return path.endsWith('.d.ts') || path.endsWith('.d.mts') || path.endsWith('.d.cts')
+}
+
 function isFile(path: string) {
   try {
     return statSync(path).isFile()
@@ -715,8 +936,14 @@ const app = command({
   args: {
     module: positional({
       type: File,
-      displayName: 'module.ts',
-      description: 'TypeScript module to document.',
+      displayName: 'input',
+      description: 'TypeScript module or package.json to document.',
+    }),
+    outDir: option({
+      type: optional(string),
+      long: 'outDir',
+      short: 'o',
+      description: 'Write package entry Markdown files to this directory.',
     }),
     symbols: restPositionals({
       type: string,
@@ -724,9 +951,11 @@ const app = command({
       description: 'Export symbol names to include.',
     }),
   },
-  async handler({ module, symbols }) {
-    const result = await generateMarkdownForModule(module, { symbols })
-    process.stdout.write(result.markdown)
+  async handler({ module, outDir, symbols }) {
+    const result = await generateMarkdownForModule(module, { outDir, symbols })
+    if (!outDir) {
+      process.stdout.write(result.markdown)
+    }
   },
 })
 

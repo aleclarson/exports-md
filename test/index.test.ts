@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findNearestTypescript, generateMarkdownForModule } from '../src/index'
@@ -137,6 +137,100 @@ export { makeThing } from './factory'
 
   expect(result.markdown).toContain("export { makeThing } from './factory';")
   expect(result.markdown).not.toContain('ExternalInput')
+})
+
+test('renders package exports from package.json input', async () => {
+  const project = await createProject()
+  const packageJson = join(project, 'package.json')
+
+  await mkdir(join(project, 'dist'), { recursive: true })
+  await writeFile(
+    join(project, 'dist', 'index.d.ts'),
+    `
+/** Main API. */
+export declare function createMain(): string
+`,
+  )
+  await writeFile(
+    join(project, 'dist', 'feature.d.ts'),
+    `
+/** Feature options. */
+export interface FeatureOptions {
+  enabled: boolean
+}
+`,
+  )
+  await writeFile(
+    packageJson,
+    JSON.stringify(
+      {
+        exports: {
+          '.': {
+            types: './dist/index.d.ts',
+            import: './dist/runtime.js',
+          },
+          './feature': './dist/feature.js',
+        },
+      },
+      null,
+      2,
+    ),
+  )
+
+  const result = await generateMarkdownForModule(packageJson, { cwd: project })
+
+  expect(result.inputFile).toBe(packageJson)
+  expect(result.markdown).toContain('# dist/index.d.ts')
+  expect(result.markdown).toContain('## `createMain`')
+  expect(result.markdown).toContain('# dist/feature.d.ts')
+  expect(result.markdown).toContain('## `FeatureOptions`')
+})
+
+test('writes package markdown entries to an output directory', async () => {
+  const project = await createProject()
+  const packageJson = join(project, 'package.json')
+
+  await mkdir(join(project, 'dist', 'features'), { recursive: true })
+  await writeFile(
+    join(project, 'dist', 'index.d.ts'),
+    `
+/** Main API. */
+export declare function createMain(): string
+`,
+  )
+  await writeFile(
+    join(project, 'dist', 'features', 'extra.d.ts'),
+    `
+/** Extra API. */
+export declare function createExtra(): string
+`,
+  )
+  await writeFile(
+    packageJson,
+    JSON.stringify(
+      {
+        exports: {
+          '.': './dist/index.js',
+          './extra': './dist/features/extra.mjs',
+        },
+      },
+      null,
+      2,
+    ),
+  )
+
+  await generateMarkdownForModule(packageJson, {
+    cwd: project,
+    outDir: 'docs/api',
+  })
+
+  const indexOutput = await readFile(join(project, 'docs', 'api', 'index.md'), 'utf8')
+  const extraOutput = await readFile(join(project, 'docs', 'api', 'features', 'extra.md'), 'utf8')
+
+  expect(indexOutput).toContain('# dist/index.d.ts')
+  expect(indexOutput).toContain('## `createMain`')
+  expect(extraOutput).toContain('# dist/features/extra.d.ts')
+  expect(extraOutput).toContain('## `createExtra`')
 })
 
 test('includes non-exported local declarations required by requested exports', async () => {
