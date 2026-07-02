@@ -1,16 +1,18 @@
 {
   "name": "exports-md",
   "version": "0.0.0",
+  "description": "Generate Markdown API docs from exported TypeScript declarations.",
   "license": "MIT OR Apache-2.0",
   "author": "Alec Larson",
   "repository": {
     "type": "git",
     "url": "https://github.com/aleclarson/exports-md.git"
   },
+  "bin": {
+    "exports-md": "./dist/index.mjs"
+  },
   "files": [
-    "dist",
-    "docs",
-    "examples"
+    "dist"
   ],
   "type": "module",
   "exports": {
@@ -26,6 +28,9 @@
     "test": "vitest",
     "prepublishOnly": "pnpm build",
     "sync-agent-rules": "curl -fsSL https://gist.githubusercontent.com/aleclarson/4c80686b1c3e204a01cdbe82f8e2c084/raw/AGENTS.md -o AGENTS.md && git add AGENTS.md && git commit -m 'chore: sync agent rules'"
+  },
+  "dependencies": {
+    "cmd-ts": "^0.15.0"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
