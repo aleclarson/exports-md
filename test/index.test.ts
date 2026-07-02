@@ -45,7 +45,7 @@ const hidden = true
   expect(output).toContain('- `name`: The name to greet.')
   expect(output).toContain('**Returns**')
   expect(output).toContain('A greeting message.')
-  expect(output).toContain('```ts\nexport declare function greet(name: string): string;\n```')
+  expect(output).toContain('```ts\nexport function greet(name: string): string;\n```')
   expect(output).toContain('Available output modes.')
   expect(output).not.toContain('\n Available output modes.')
   expect(output).toContain("export type OutputMode = 'short' | 'long';")
@@ -90,7 +90,62 @@ export { parseValue as parse }
 
   expect(result.markdown).toContain('## `parse`')
   expect(result.markdown).toContain('- `value`: Raw input.')
-  expect(result.markdown).toContain('declare function parseValue(value: string): number;')
+  expect(result.markdown).toContain('export function parse(value: string): number;')
+})
+
+test('rewrites aliased type declarations without dropping type constraints', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+/** Constrains boxed values. */
+interface Constraint {
+  value: string
+}
+
+/** Boxed value. */
+type InternalBox<T extends Constraint> = {
+  value: T
+}
+
+export { InternalBox as Box }
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, { cwd: project })
+
+  expect(result.markdown).toContain('## `Constraint`')
+  expect(result.markdown).toContain('interface Constraint')
+  expect(result.markdown).not.toContain('export interface Constraint')
+  expect(result.markdown).toContain('## `Box`')
+  expect(result.markdown).toContain('export type Box<T extends Constraint>')
+  expect(result.markdown).not.toContain('InternalBox')
+})
+
+test('rewrites default export aliases as export default declarations', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+/** Creates the default value. */
+function createDefault(): string {
+  return 'default'
+}
+
+export { createDefault as default }
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, { cwd: project })
+
+  expect(result.markdown).toContain('## `default`')
+  expect(result.markdown).toContain('Creates the default value.')
+  expect(result.markdown).toContain('export default function createDefault(): string;')
+  expect(result.markdown).not.toContain('declare function createDefault')
 })
 
 test('includes external re-export declarations', async () => {
@@ -264,7 +319,7 @@ export { parseValue as parse }
   expect(result.markdown).toContain('## `InternalInput`')
   expect(result.markdown).toContain('Internal input shape.')
   expect(result.markdown).toContain('## `parse`')
-  expect(result.markdown).toContain('declare function parseValue(value: InternalInput): number;')
+  expect(result.markdown).toContain('export function parse(value: InternalInput): number;')
 })
 
 test('filters requested symbols and includes local dependencies plus import lines', async () => {

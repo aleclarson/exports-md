@@ -10,7 +10,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import type { Diagnostic, Identifier, SourceFile, Statement } from 'typescript'
 
 type TypeScript = typeof import('typescript')
-const cacheVersion = 3
+const cacheVersion = 4
 const packageVersion = '0.0.0'
 
 export interface GeneratedMarkdown {
@@ -263,10 +263,66 @@ function declarationToMarkdown(
     const comment = getLeadingTsDoc(ts, declaration, statement)
     const docs = comment ? renderTsDoc(parseTsDoc(comment)) : ''
 
-    sections.push(renderDeclarationSection(entry.exportedName, docs, entry.code))
+    sections.push(
+      renderDeclarationSection(entry.exportedName, docs, renderDeclarationCode(ts, entry)),
+    )
   }
 
   return `${sections.join('\n\n').trimEnd()}\n`
+}
+
+function renderDeclarationCode(ts: TypeScript, entry: DeclarationEntry) {
+  let code = entry.code
+
+  if (
+    entry.isExported &&
+    entry.exportedName !== entry.localName &&
+    entry.exportedName !== 'default'
+  ) {
+    code = replaceDeclarationName(ts, entry, entry.exportedName)
+  }
+
+  code = stripDeclareModifier(code)
+
+  if (!entry.isExported) return code
+  if (entry.exportedName === 'default') return renderDefaultDeclarationCode(ts, entry, code)
+
+  return ensureExportModifier(code)
+}
+
+function replaceDeclarationName(ts: TypeScript, entry: DeclarationEntry, name: string) {
+  const nameNode = getStatementNameNode(ts, entry.statement)
+  if (!nameNode) return entry.code
+
+  const sourceFile = entry.statement.getSourceFile()
+  const statementStart = entry.statement.getStart(sourceFile)
+  const nameStart = nameNode.getStart(sourceFile) - statementStart
+  const nameEnd = nameNode.end - statementStart
+
+  return `${entry.code.slice(0, nameStart)}${name}${entry.code.slice(nameEnd)}`
+}
+
+function stripDeclareModifier(code: string) {
+  return code.replace(/^export\s+declare\s+/, 'export ').replace(/^declare\s+/, '')
+}
+
+function renderDefaultDeclarationCode(ts: TypeScript, entry: DeclarationEntry, code: string) {
+  if (/^export\s+default\b/.test(code)) return code
+
+  const withoutExport = code.replace(/^export\s+/, '')
+  if (
+    ts.isFunctionDeclaration(entry.statement) ||
+    ts.isClassDeclaration(entry.statement) ||
+    ts.isInterfaceDeclaration(entry.statement)
+  ) {
+    return `export default ${withoutExport}`
+  }
+
+  return `${withoutExport}\nexport default ${entry.localName};`
+}
+
+function ensureExportModifier(code: string) {
+  return /^export\b/.test(code) ? code : `export ${code}`
 }
 
 function readPackageEntryPoints(packageJsonFile: string, packageJson: { exports?: unknown }) {
@@ -737,6 +793,29 @@ function getStatementName(ts: TypeScript, statement: Statement) {
   if (ts.isVariableStatement(statement)) {
     const declaration = statement.declarationList.declarations[0]
     return declaration && ts.isIdentifier(declaration.name) ? declaration.name.text : undefined
+  }
+}
+
+function getStatementNameNode(ts: TypeScript, statement: Statement): Identifier | undefined {
+  if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+    return statement.name
+  }
+
+  if (
+    ts.isInterfaceDeclaration(statement) ||
+    ts.isTypeAliasDeclaration(statement) ||
+    ts.isEnumDeclaration(statement)
+  ) {
+    return statement.name
+  }
+
+  if (ts.isModuleDeclaration(statement)) {
+    return ts.isIdentifier(statement.name) ? statement.name : undefined
+  }
+
+  if (ts.isVariableStatement(statement)) {
+    const declaration = statement.declarationList.declarations[0]
+    return declaration && ts.isIdentifier(declaration.name) ? declaration.name : undefined
   }
 }
 
