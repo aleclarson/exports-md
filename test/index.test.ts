@@ -93,6 +93,37 @@ export { parseValue as parse }
   expect(result.markdown).toContain('export function parse(value: string): number;')
 })
 
+test('prints symbol sections in reverse order when requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+/** First docs. */
+export interface First {
+  value: string
+}
+
+/** Second docs. */
+export function second(input: First) {
+  return input.value
+}
+
+/** Third docs. */
+export const third = true
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    reverseSymbols: true,
+  })
+
+  expect(result.markdown.indexOf('## `third`')).toBeLessThan(result.markdown.indexOf('## `second`'))
+  expect(result.markdown.indexOf('## `second`')).toBeLessThan(result.markdown.indexOf('## `First`'))
+})
+
 test('rewrites aliased type declarations without dropping type constraints', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
@@ -381,6 +412,41 @@ export interface FeatureOptions {
   expect(result.markdown).toContain('## `createMain`')
   expect(result.markdown).toMatch(/^# foo\/feature$/m)
   expect(result.markdown).toContain('## `FeatureOptions`')
+})
+
+test('prints package entry symbols in reverse order when requested', async () => {
+  const project = await createProject()
+  const packageJson = join(project, 'package.json')
+
+  await mkdir(join(project, 'dist'), { recursive: true })
+  await writeFile(
+    join(project, 'dist', 'index.d.ts'),
+    `
+/** First API. */
+export declare function first(): string
+
+/** Second API. */
+export declare function second(): string
+`,
+  )
+  await writeFile(
+    packageJson,
+    JSON.stringify(
+      {
+        name: 'foo',
+        exports: './dist/index.js',
+      },
+      null,
+      2,
+    ),
+  )
+
+  const result = await generateMarkdownForModule(packageJson, {
+    cwd: project,
+    reverseSymbols: true,
+  })
+
+  expect(result.markdown.indexOf('## `second`')).toBeLessThan(result.markdown.indexOf('## `first`'))
 })
 
 test('writes package markdown entries to an output directory', async () => {

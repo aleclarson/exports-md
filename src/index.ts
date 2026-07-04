@@ -34,6 +34,7 @@ export interface GenerateMarkdownOptions {
   cwd?: string
   followReExports?: boolean
   outDir?: string
+  reverseSymbols?: boolean
   symbols?: string[]
 }
 
@@ -95,16 +96,30 @@ export async function generateMarkdownForModule(
   const inputFile = resolve(cwd, modulePath)
   const symbols = normalizeSymbols(options.symbols ?? [])
   const followReExports = options.followReExports ?? isPackageJson(inputFile)
+  const reverseSymbols = options.reverseSymbols ?? false
 
   if (isPackageJson(inputFile)) {
-    return generateMarkdownForPackage(inputFile, cwd, symbols, followReExports, options.outDir)
+    return generateMarkdownForPackage(
+      inputFile,
+      cwd,
+      symbols,
+      followReExports,
+      reverseSymbols,
+      options.outDir,
+    )
   }
 
   if (options.outDir) {
     throw new Error('--outDir is only supported for package.json input.')
   }
 
-  return generateMarkdownForDeclarationFile(inputFile, cwd, symbols, followReExports)
+  return generateMarkdownForDeclarationFile(
+    inputFile,
+    cwd,
+    symbols,
+    followReExports,
+    reverseSymbols,
+  )
 }
 
 export function findNearestTypescript(startDir = process.cwd()) {
@@ -129,6 +144,7 @@ async function generateMarkdownForPackage(
   cwd: string,
   symbols: readonly string[],
   followReExports: boolean,
+  reverseSymbols: boolean,
   outDir?: string,
 ): Promise<GeneratedMarkdown> {
   if (symbols.length > 0) {
@@ -142,7 +158,14 @@ async function generateMarkdownForPackage(
     entryPoints.map(
       async ({ exportSubpath, inputFile }): Promise<PackageMarkdownEntry & GeneratedMarkdown> => {
         const heading = getPackageEntryHeading(packageName, exportSubpath)
-        return generateMarkdownForDeclarationFile(inputFile, cwd, symbols, followReExports, heading)
+        return generateMarkdownForDeclarationFile(
+          inputFile,
+          cwd,
+          symbols,
+          followReExports,
+          reverseSymbols,
+          heading,
+        )
       },
     ),
   )
@@ -168,12 +191,13 @@ async function generateMarkdownForDeclarationFile(
   cwd: string,
   symbols: readonly string[],
   followReExports: boolean,
+  reverseSymbols: boolean,
   heading = basename(inputFile),
 ): Promise<GeneratedMarkdown> {
   assertTypeScriptModule(inputFile)
   const cacheFile = followReExports
     ? undefined
-    : await getCacheFile(inputFile, cwd, symbols, heading)
+    : await getCacheFile(inputFile, cwd, symbols, heading, reverseSymbols)
   const cached = cacheFile ? await readCache(cacheFile) : undefined
   if (cached) {
     return {
@@ -192,6 +216,7 @@ async function generateMarkdownForDeclarationFile(
     cwd,
     followReExports,
     inputFile,
+    reverseSymbols,
     visited: new Set([resolve(inputFile)]),
   })
 
@@ -260,6 +285,7 @@ interface RenderContext {
   cwd: string
   followReExports: boolean
   inputFile: string
+  reverseSymbols: boolean
   visited: Set<string>
 }
 
@@ -329,6 +355,8 @@ async function renderDeclarationBody(
       entry.exportedName,
   }))
 
+  const declarationSections: string[] = []
+
   for (const entries of groupDeclarationEntries(includedWithOverrides)) {
     const entry = entries[0]!
     const { statement } = entry
@@ -341,10 +369,11 @@ async function renderDeclarationBody(
     const docs = comment ? renderTsDoc(parseTsDoc(comment)) : ''
     const code = entries.map((entry) => renderDeclarationCode(ts, entry)).join('\n')
 
-    sections.push(renderDeclarationSection(entry.exportedName, docs, code))
+    declarationSections.push(renderDeclarationSection(entry.exportedName, docs, code))
   }
 
-  sections.push(...followedReExports.sections)
+  const symbolSections = [...declarationSections, ...followedReExports.sections]
+  sections.push(...(context?.reverseSymbols ? symbolSections.toReversed() : symbolSections))
 
   return sections
 }
@@ -1151,6 +1180,7 @@ async function getCacheFile(
   cwd: string,
   symbols: readonly string[],
   heading: string,
+  reverseSymbols: boolean,
 ) {
   const source = await readFile(inputFile, 'utf8')
   const configPath = findTsConfig(inputFile, cwd)
@@ -1171,6 +1201,8 @@ async function getCacheFile(
     .update(JSON.stringify(symbols))
     .update('\0')
     .update(heading)
+    .update('\0')
+    .update(JSON.stringify({ reverseSymbols }))
     .digest('hex')
 
   return join(tmpdir(), 'exports-md', `${hash}.json`)
@@ -1273,16 +1305,21 @@ const app = command({
       description:
         'Render relative re-exported declarations instead of only printing export-from lines.',
     }),
+    reverseSymbols: flag({
+      long: 'reverseSymbols',
+      description: 'Print rendered symbol sections in reverse order.',
+    }),
     symbols: restPositionals({
       type: string,
       displayName: 'symbol',
       description: 'Export symbol names to include.',
     }),
   },
-  async handler({ module, followReExports, outDir, symbols }) {
+  async handler({ module, followReExports, outDir, reverseSymbols, symbols }) {
     const result = await generateMarkdownForModule(module, {
       followReExports: followReExports || undefined,
       outDir,
+      reverseSymbols,
       symbols,
     })
     if (!outDir) {

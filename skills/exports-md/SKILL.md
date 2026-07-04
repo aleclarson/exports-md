@@ -29,6 +29,12 @@ exports-md path/to/module.ts ExportA ExportB
 
 Symbol queries include the requested exports plus local declaration dependencies needed to understand them. Symbol queries are for module inputs, not `package.json` inputs. Imported symbols are represented by their import line only. Module re-exports are represented by their `export ... from` line unless `--followReExports` is used; when following is enabled, only relative re-exports are expanded, while non-relative package re-exports remain reference lines.
 
+Print rendered symbol sections in reverse order when a consumer benefits from bottom-up or newest-last API context:
+
+```sh
+exports-md path/to/module.ts --reverseSymbols
+```
+
 Render every declaration entry point from a package export map:
 
 ```sh

@@ -12,6 +12,7 @@ export interface GenerateMarkdownOptions {
   cwd?: string;
   followReExports?: boolean;
   outDir?: string;
+  reverseSymbols?: boolean;
   symbols?: string[];
 }
 // #endregion
