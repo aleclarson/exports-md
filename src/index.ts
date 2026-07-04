@@ -76,6 +76,12 @@ interface ReExportEntry {
   statement: Statement
 }
 
+interface ImportedReExportEntry {
+  exportedName: string
+  importEntry: ImportEntry
+  sourceName: string
+}
+
 interface CachedMarkdown {
   declaration: string
   markdown: string
@@ -327,9 +333,16 @@ async function renderDeclarationBody(
     ts.ScriptTarget.Latest,
     true,
   )
-  const { declarations, imports, reExports } = indexDeclarationFile(ts, declaration, sourceFile)
+  const { declarations, importedReExports, imports, reExports } = indexDeclarationFile(
+    ts,
+    declaration,
+    sourceFile,
+  )
   const requested = new Set(requestedSymbols)
-  const externalExportNames = new Set(reExports.flatMap((entry) => [...entry.exportedNames]))
+  const externalExportNames = new Set([
+    ...reExports.flatMap((entry) => [...entry.exportedNames]),
+    ...importedReExports.map((entry) => entry.exportedName),
+  ])
   // `export * from` can satisfy a symbol query, but the emitted line does not reveal its names.
   const hasUnknownExternalExports = reExports.some((entry) => entry.exportsAll)
   const included = selectDeclarationEntries(
@@ -346,6 +359,10 @@ async function renderDeclarationBody(
   const unresolvedReExports = context?.followReExports
     ? includedReExports.filter((entry) => !followedReExports.followed.has(entry))
     : includedReExports
+  const includedImportedReExports = selectImportedReExportEntries(importedReExports, requested)
+  const followedImportedReExports = context?.followReExports
+    ? await renderFollowedImportedReExportSections(ts, includedImportedReExports, context)
+    : { followed: new Set<ImportedReExportEntry>(), sections: [] }
   const importedNames = collectReferencedImportedNames(ts, included, imports, declarations)
   const includedImports = imports.filter((entry) =>
     [...entry.importedNames].some((name) => importedNames.has(name)),
@@ -385,7 +402,9 @@ async function renderDeclarationBody(
       entries.find((entry) => getLeadingTsDoc(ts, declaration, entry.statement)) ?? entry
     const comment = getLeadingTsDoc(ts, declaration, documentedEntry.statement)
     const docs = comment ? renderTsDoc(parseTsDoc(comment)) : ''
-    const code = entries.map((entry) => renderDeclarationCode(ts, entry)).join('\n')
+    const code = entries
+      .map((entry) => renderDeclarationCode(ts, entry, exportedNameOverrides))
+      .join('\n')
 
     declarationSections.push(renderDeclarationSection(entry.exportedName, docs, code))
   }
@@ -393,6 +412,7 @@ async function renderDeclarationBody(
   const symbolSections = [
     ...declarationSections,
     ...followedImports.sections,
+    ...followedImportedReExports.sections,
     ...followedReExports.sections,
   ]
   sections.push(...(context?.reverseSymbols ? symbolSections.toReversed() : symbolSections))
@@ -441,6 +461,64 @@ async function renderFollowedImportSections(
       )),
     )
     followed.add(entry)
+  }
+
+  return {
+    followed,
+    sections,
+  }
+}
+
+async function renderFollowedImportedReExportSections(
+  ts: TypeScript,
+  entries: ImportedReExportEntry[],
+  context: RenderContext,
+) {
+  const followed = new Set<ImportedReExportEntry>()
+  const sections: string[] = []
+  const groups = new Map<ImportEntry, ImportedReExportEntry[]>()
+
+  for (const entry of entries) {
+    const group = groups.get(entry.importEntry)
+    if (group) {
+      group.push(entry)
+    } else {
+      groups.set(entry.importEntry, [entry])
+    }
+  }
+
+  for (const [importEntry, group] of groups) {
+    const targetFile = resolveModuleTarget(
+      ts,
+      context.inputFile,
+      context.cwd,
+      importEntry.moduleSpecifier,
+    )
+    if (!targetFile || context.visited.has(resolve(targetFile))) continue
+
+    const overrides = new Map(group.map((entry) => [entry.sourceName, entry.exportedName]))
+    const targetDeclaration = isDeclarationFile(targetFile)
+      ? await readFile(targetFile, 'utf8')
+      : compileDeclaration(ts, targetFile, context.cwd)
+    const targetContext = {
+      ...context,
+      inputFile: targetFile,
+      visited: new Set([...context.visited, resolve(targetFile)]),
+    }
+
+    sections.push(
+      ...(await renderDeclarationBody(
+        ts,
+        targetDeclaration,
+        group.map((entry) => entry.sourceName),
+        targetContext,
+        overrides,
+      )),
+    )
+
+    for (const entry of group) {
+      followed.add(entry)
+    }
   }
 
   return {
@@ -513,16 +591,23 @@ function groupDeclarationEntries(entries: DeclarationEntry[]) {
   return [...groups.values()]
 }
 
-function renderDeclarationCode(ts: TypeScript, entry: DeclarationEntry) {
-  let code = entry.code
+function renderDeclarationCode(
+  ts: TypeScript,
+  entry: DeclarationEntry,
+  nameOverrides: ReadonlyMap<string, string> = new Map(),
+) {
+  const replacements = new Map(nameOverrides)
 
   if (
     entry.isExported &&
     entry.exportedName !== entry.localName &&
     entry.exportedName !== 'default'
   ) {
-    code = replaceDeclarationName(ts, entry, entry.exportedName)
+    replacements.set(entry.localName, entry.exportedName)
   }
+
+  let code =
+    replacements.size > 0 ? replaceDeclarationIdentifiers(ts, entry, replacements) : entry.code
 
   code = stripDeclareModifier(code)
 
@@ -532,16 +617,33 @@ function renderDeclarationCode(ts: TypeScript, entry: DeclarationEntry) {
   return ensureExportModifier(code)
 }
 
-function replaceDeclarationName(ts: TypeScript, entry: DeclarationEntry, name: string) {
-  const nameNode = getStatementNameNode(ts, entry.statement)
-  if (!nameNode) return entry.code
-
+function replaceDeclarationIdentifiers(
+  ts: TypeScript,
+  entry: DeclarationEntry,
+  replacements: ReadonlyMap<string, string>,
+) {
   const sourceFile = entry.statement.getSourceFile()
   const statementStart = entry.statement.getStart(sourceFile)
-  const nameStart = nameNode.getStart(sourceFile) - statementStart
-  const nameEnd = nameNode.end - statementStart
+  const edits = collectIdentifiers(ts, entry.statement)
+    .map((identifier) => {
+      const replacement = replacements.get(identifier.text)
+      if (!replacement) return
 
-  return `${entry.code.slice(0, nameStart)}${name}${entry.code.slice(nameEnd)}`
+      return {
+        end: identifier.end - statementStart,
+        replacement,
+        start: identifier.getStart(sourceFile) - statementStart,
+      }
+    })
+    .filter((edit): edit is NonNullable<typeof edit> => Boolean(edit))
+    .sort((left, right) => right.start - left.start)
+
+  let code = entry.code
+  for (const edit of edits) {
+    code = `${code.slice(0, edit.start)}${edit.replacement}${code.slice(edit.end)}`
+  }
+
+  return code
 }
 
 function stripDeclareModifier(code: string) {
@@ -901,6 +1003,7 @@ function collectExports(ts: TypeScript, sourceFile: SourceFile) {
 function indexDeclarationFile(ts: TypeScript, declaration: string, sourceFile: SourceFile) {
   const exportsByLocalName = collectExports(ts, sourceFile)
   const declarations: DeclarationEntry[] = []
+  const importedReExports: ImportedReExportEntry[] = []
   const imports: ImportEntry[] = []
   const reExports: ReExportEntry[] = []
 
@@ -926,14 +1029,26 @@ function indexDeclarationFile(ts: TypeScript, declaration: string, sourceFile: S
 
       const importedNameAliases = collectImportedNameAliases(ts, statement)
       if (importedNameAliases.size > 0) {
-        imports.push({
+        const importEntry = {
           code: declaration.slice(statement.getStart(sourceFile), statement.end).trim(),
           importedNameAliases,
           importedNames: new Set(importedNameAliases.keys()),
           index,
           moduleSpecifier: statement.moduleSpecifier.text,
           statement,
-        })
+        }
+        imports.push(importEntry)
+
+        for (const [localName, sourceName] of importedNameAliases) {
+          const exportedName = exportsByLocalName.get(localName)
+          if (!exportedName) continue
+
+          importedReExports.push({
+            exportedName,
+            importEntry,
+            sourceName,
+          })
+        }
       }
       return
     }
@@ -955,6 +1070,7 @@ function indexDeclarationFile(ts: TypeScript, declaration: string, sourceFile: S
 
   return {
     declarations,
+    importedReExports,
     imports,
     reExports,
   }
@@ -1061,6 +1177,15 @@ function selectReExportEntries(reExports: ReExportEntry[], requested: ReadonlySe
   )
 }
 
+function selectImportedReExportEntries(
+  importedReExports: ImportedReExportEntry[],
+  requested: ReadonlySet<string>,
+) {
+  if (requested.size === 0) return importedReExports
+
+  return importedReExports.filter((entry) => requested.has(entry.exportedName))
+}
+
 function collectReferencedImportedNames(
   ts: TypeScript,
   declarations: DeclarationEntry[],
@@ -1118,29 +1243,6 @@ function getStatementName(ts: TypeScript, statement: Statement) {
   if (ts.isVariableStatement(statement)) {
     const declaration = statement.declarationList.declarations[0]
     return declaration && ts.isIdentifier(declaration.name) ? declaration.name.text : undefined
-  }
-}
-
-function getStatementNameNode(ts: TypeScript, statement: Statement): Identifier | undefined {
-  if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
-    return statement.name
-  }
-
-  if (
-    ts.isInterfaceDeclaration(statement) ||
-    ts.isTypeAliasDeclaration(statement) ||
-    ts.isEnumDeclaration(statement)
-  ) {
-    return statement.name
-  }
-
-  if (ts.isModuleDeclaration(statement)) {
-    return ts.isIdentifier(statement.name) ? statement.name : undefined
-  }
-
-  if (ts.isVariableStatement(statement)) {
-    const declaration = statement.declarationList.declarations[0]
-    return declaration && ts.isIdentifier(declaration.name) ? declaration.name : undefined
   }
 }
 

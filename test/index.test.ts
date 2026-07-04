@@ -305,6 +305,50 @@ export * as namespace from './namespace'
   expect(result.markdown).not.toContain('Namespaced value docs.')
 })
 
+test('follows imported aliases exported through a local export list when requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'index.d.mts')
+
+  await writeFile(
+    join(project, 'schema-BCZugTrh.d.mts'),
+    `
+/** JSON record docs. */
+export interface A {
+  value: string
+}
+
+/** Parse patch docs. */
+export declare function C(input: A): A
+
+/** Hidden schema docs. */
+export interface Hidden {
+  value: string
+}
+`,
+  )
+  await writeFile(
+    inputFile,
+    `
+import { A as JsonRecord, C as parsePatch, Hidden as hidden } from "./schema-BCZugTrh.mjs";
+export { type JsonRecord, parsePatch };
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    followReExports: true,
+  })
+
+  expect(result.markdown).not.toContain('import { A as JsonRecord')
+  expect(result.markdown).toContain('## `JsonRecord`')
+  expect(result.markdown).toContain('JSON record docs.')
+  expect(result.markdown).toContain('export interface JsonRecord')
+  expect(result.markdown).toContain('## `parsePatch`')
+  expect(result.markdown).toContain('Parse patch docs.')
+  expect(result.markdown).toContain('export function parsePatch(input: JsonRecord): JsonRecord')
+  expect(result.markdown).not.toContain('Hidden schema docs.')
+})
+
 test('filters explicit external re-export declarations by requested symbol', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
