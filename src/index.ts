@@ -361,7 +361,12 @@ async function renderDeclarationBody(
     : includedReExports
   const includedImportedReExports = selectImportedReExportEntries(importedReExports, requested)
   const followedImportedReExports = context?.followReExports
-    ? await renderFollowedImportedReExportSections(ts, includedImportedReExports, context)
+    ? await renderFollowedImportedReExportSections(
+        ts,
+        includedImportedReExports,
+        importedReExports,
+        context,
+      )
     : { followed: new Set<ImportedReExportEntry>(), sections: [] }
   const importedNames = collectReferencedImportedNames(ts, included, imports, declarations)
   const includedImports = imports.filter((entry) =>
@@ -472,6 +477,7 @@ async function renderFollowedImportSections(
 async function renderFollowedImportedReExportSections(
   ts: TypeScript,
   entries: ImportedReExportEntry[],
+  allEntries: ImportedReExportEntry[],
   context: RenderContext,
 ) {
   const followed = new Set<ImportedReExportEntry>()
@@ -496,7 +502,11 @@ async function renderFollowedImportedReExportSections(
     )
     if (!targetFile || context.visited.has(resolve(targetFile))) continue
 
-    const overrides = new Map(group.map((entry) => [entry.sourceName, entry.exportedName]))
+    const overrides = new Map(
+      allEntries
+        .filter((entry) => entry.importEntry === importEntry)
+        .map((entry) => [entry.sourceName, entry.exportedName]),
+    )
     const targetDeclaration = isDeclarationFile(targetFile)
       ? await readFile(targetFile, 'utf8')
       : compileDeclaration(ts, targetFile, context.cwd)
@@ -624,8 +634,11 @@ function replaceDeclarationIdentifiers(
 ) {
   const sourceFile = entry.statement.getSourceFile()
   const statementStart = entry.statement.getStart(sourceFile)
+  const typeParameters = collectStatementTypeParameterNames(ts, entry.statement)
   const edits = collectIdentifiers(ts, entry.statement)
     .map((identifier) => {
+      if (typeParameters.has(identifier.text)) return
+
       const replacement = replacements.get(identifier.text)
       if (!replacement) return
 
@@ -644,6 +657,23 @@ function replaceDeclarationIdentifiers(
   }
 
   return code
+}
+
+function collectStatementTypeParameterNames(ts: TypeScript, statement: Statement) {
+  const names = new Set<string>()
+
+  if (
+    ts.isFunctionDeclaration(statement) ||
+    ts.isClassDeclaration(statement) ||
+    ts.isInterfaceDeclaration(statement) ||
+    ts.isTypeAliasDeclaration(statement)
+  ) {
+    for (const typeParameter of statement.typeParameters ?? []) {
+      names.add(typeParameter.name.text)
+    }
+  }
+
+  return names
 }
 
 function stripDeclareModifier(code: string) {

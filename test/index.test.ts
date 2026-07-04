@@ -320,6 +320,9 @@ export interface A {
 /** Parse patch docs. */
 export declare function C(input: A): A
 
+/** Generic parse docs. */
+export declare function D<A>(input: A): A
+
 /** Hidden schema docs. */
 export interface Hidden {
   value: string
@@ -329,23 +332,28 @@ export interface Hidden {
   await writeFile(
     inputFile,
     `
-import { A as JsonRecord, C as parsePatch, Hidden as hidden } from "./schema-BCZugTrh.mjs";
-export { type JsonRecord, parsePatch };
+import { A as JsonRecord, C as parsePatch, D as parseGeneric, Hidden as hidden } from "./schema-BCZugTrh.mjs";
+export { type JsonRecord, parseGeneric, parsePatch };
 `,
   )
 
   const result = await generateMarkdownForModule(inputFile, {
     cwd: project,
     followReExports: true,
+    symbols: ['parseGeneric', 'parsePatch'],
   })
 
   expect(result.markdown).not.toContain('import { A as JsonRecord')
   expect(result.markdown).toContain('## `JsonRecord`')
+  expect(result.markdown).not.toContain('## `A`')
   expect(result.markdown).toContain('JSON record docs.')
   expect(result.markdown).toContain('export interface JsonRecord')
   expect(result.markdown).toContain('## `parsePatch`')
   expect(result.markdown).toContain('Parse patch docs.')
   expect(result.markdown).toContain('export function parsePatch(input: JsonRecord): JsonRecord')
+  expect(result.markdown).toContain('## `parseGeneric`')
+  expect(result.markdown).toContain('export function parseGeneric<A>(input: A): A')
+  expect(result.markdown).not.toContain('export function parseGeneric<JsonRecord>')
   expect(result.markdown).not.toContain('Hidden schema docs.')
 })
 
