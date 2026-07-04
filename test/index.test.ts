@@ -357,6 +357,50 @@ export { type JsonRecord, parseGeneric, parsePatch };
   expect(result.markdown).not.toContain('Hidden schema docs.')
 })
 
+test('uses public aliases for dependencies exported as minified chunk names', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'index.d.mts')
+
+  await writeFile(
+    join(project, 'schema-BCZugTrh.d.mts'),
+    `
+/** JSON value docs. */
+type JsonValue = string | number | JsonValue[] | {
+  [key: string]: JsonValue
+}
+
+/** JSON record docs. */
+type JsonRecord = Record<string, JsonValue>
+
+/** Parse patch docs. */
+declare function parsePatch(input: JsonRecord): JsonRecord
+
+export { JsonRecord as A, parsePatch as C, JsonValue as j }
+`,
+  )
+  await writeFile(
+    inputFile,
+    `
+import { A as JsonRecord, C as parsePatch, j as JsonValue } from "./schema-BCZugTrh.mjs";
+export { type JsonRecord, type JsonValue, parsePatch };
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    followReExports: true,
+    symbols: ['parsePatch'],
+  })
+
+  expect(result.markdown).toContain('## `JsonValue`')
+  expect(result.markdown).not.toContain('## `j`')
+  expect(result.markdown).toContain('## `JsonRecord`')
+  expect(result.markdown).not.toContain('## `A`')
+  expect(result.markdown).toContain('## `parsePatch`')
+  expect(result.markdown).toContain('export function parsePatch(input: JsonRecord): JsonRecord')
+  expect(result.markdown).not.toContain('Record<string, j>')
+})
+
 test('filters explicit external re-export declarations by requested symbol', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
@@ -664,6 +708,48 @@ export function createInput(input: Input): Input {
   expect(result.markdown).toContain('External input docs.')
   expect(result.markdown).toContain('export interface Input')
   expect(result.markdown).not.toContain('UnusedExternal')
+})
+
+test('uses public aliases for dependencies of followed imports', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.d.mts')
+
+  await writeFile(
+    join(project, 'schema-BCZugTrh.d.mts'),
+    `
+/** JSON value docs. */
+type JsonValue = string | number | JsonValue[] | {
+  [key: string]: JsonValue
+}
+
+/** JSON record docs. */
+type JsonRecord = Record<string, JsonValue>
+
+export { JsonRecord as A, JsonValue as j }
+`,
+  )
+  await writeFile(
+    inputFile,
+    `
+import { A as JsonRecord } from "./schema-BCZugTrh.mjs";
+
+/** Stores a record. */
+export declare function storeRecord(input: JsonRecord): JsonRecord
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    followImports: true,
+    symbols: ['storeRecord'],
+  })
+
+  expect(result.markdown).toContain('## `JsonValue`')
+  expect(result.markdown).not.toContain('## `j`')
+  expect(result.markdown).toContain('## `JsonRecord`')
+  expect(result.markdown).not.toContain('## `A`')
+  expect(result.markdown).toContain('export type JsonRecord = Record<string, JsonValue>')
+  expect(result.markdown).not.toContain('Record<string, j>')
 })
 
 test('follows relative imports by default for package inputs', async () => {

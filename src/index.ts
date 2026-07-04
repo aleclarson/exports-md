@@ -389,10 +389,7 @@ async function renderDeclarationBody(
 
   const includedWithOverrides = included.map((entry) => ({
     ...entry,
-    exportedName:
-      exportedNameOverrides.get(entry.exportedName) ??
-      exportedNameOverrides.get(entry.localName) ??
-      entry.exportedName,
+    exportedName: getRenderedExportedName(entry, exportedNameOverrides),
   }))
 
   const declarationSections: string[] = []
@@ -425,6 +422,25 @@ async function renderDeclarationBody(
   return sections
 }
 
+function getRenderedExportedName(
+  entry: DeclarationEntry,
+  exportedNameOverrides: ReadonlyMap<string, string>,
+) {
+  const explicitName =
+    exportedNameOverrides.get(entry.exportedName) ?? exportedNameOverrides.get(entry.localName)
+  if (explicitName) return explicitName
+
+  if (isMinifiedName(entry.exportedName) && !isMinifiedName(entry.localName)) {
+    return entry.localName
+  }
+
+  return entry.exportedName
+}
+
+function isMinifiedName(name: string) {
+  return /^[$A-Z_a-z]$/.test(name)
+}
+
 async function renderFollowedImportSections(
   ts: TypeScript,
   imports: ImportEntry[],
@@ -446,7 +462,7 @@ async function renderFollowedImportSections(
     )
     if (!targetFile || context.visited.has(resolve(targetFile))) continue
 
-    const overrides = getImportedNameOverrides(entry, importedNames)
+    const overrides = getImportedNameOverrides(entry)
     const targetDeclaration = isDeclarationFile(targetFile)
       ? await readFile(targetFile, 'utf8')
       : compileDeclaration(ts, targetFile, context.cwd)
@@ -724,11 +740,11 @@ function getImportRequestedSourceNames(entry: ImportEntry, importedNames: Readon
     .map(([, sourceName]) => sourceName)
 }
 
-function getImportedNameOverrides(entry: ImportEntry, importedNames: ReadonlySet<string>) {
+function getImportedNameOverrides(entry: ImportEntry) {
   const overrides = new Map<string, string>()
 
   for (const [localName, sourceName] of entry.importedNameAliases) {
-    if (importedNames.has(localName) && localName !== sourceName) {
+    if (localName !== sourceName) {
       overrides.set(sourceName, localName)
     }
   }
