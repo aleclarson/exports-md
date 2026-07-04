@@ -10,6 +10,7 @@ export interface GeneratedMarkdown {
 }
 export interface GenerateMarkdownOptions {
   cwd?: string;
+  followReExports?: boolean;
   outDir?: string;
   symbols?: string[];
 }

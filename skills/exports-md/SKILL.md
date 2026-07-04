@@ -27,7 +27,7 @@ Query specific exported symbols with positional names after the module path:
 exports-md path/to/module.ts ExportA ExportB
 ```
 
-Symbol queries include the requested exports plus local declaration dependencies needed to understand them. Symbol queries are for module inputs, not `package.json` inputs. Imported symbols are represented by their import line only, and external re-exports are represented by their `export ... from` line only; do not expect `exports-md` to recursively expand imported or re-exported modules.
+Symbol queries include the requested exports plus local declaration dependencies needed to understand them. Symbol queries are for module inputs, not `package.json` inputs. Imported symbols are represented by their import line only. Module re-exports are represented by their `export ... from` line unless `--followReExports` is used; when following is enabled, only relative re-exports are expanded, while non-relative package re-exports remain reference lines.
 
 Render every declaration entry point from a package export map:
 
@@ -36,6 +36,12 @@ exports-md package.json
 ```
 
 Package output uses H1 headings based on the package name and export subpath, such as `foo` for `.` and `foo/bar` for `./bar`.
+
+Package inputs follow relative re-exports to their declarations by default. For module inputs, opt in when re-exported declarations are more useful than the re-export statements:
+
+```sh
+exports-md path/to/module.ts --followReExports
+```
 
 Write package entry docs to a directory when an artifact tree is useful:
 
@@ -49,7 +55,7 @@ exports-md package.json --outDir docs/api
 - Treat the output as API context, not behavioral proof. Read source or tests when implementation behavior, side effects, runtime control flow, or invariants matter.
 - Keep output in conversation context when possible. Write a file only when the user asks for one or when another tool needs a path.
 - Use symbol queries for focused work to avoid loading unrelated API surface.
-- If output is stale or surprising, rerun the command from the intended project root. The tool caches rendered Markdown by input path, source content, tsconfig content, requested symbols, heading, package version, and renderer version.
+- If output is stale or surprising, rerun the command from the intended project root. The tool caches rendered Markdown by input path, source content, tsconfig content, requested symbols, heading, package version, and renderer version. Output that follows re-exports is not cached.
 
 ## Failure Modes
 

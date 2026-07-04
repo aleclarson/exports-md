@@ -1,5 +1,15 @@
 #!/usr/bin/env node
-import { binary, command, option, optional, positional, restPositionals, run, string } from 'cmd-ts'
+import {
+  binary,
+  command,
+  flag,
+  option,
+  optional,
+  positional,
+  restPositionals,
+  run,
+  string,
+} from 'cmd-ts'
 import { File } from 'cmd-ts/batteries/fs'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
@@ -7,7 +17,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
-import type { Diagnostic, Identifier, SourceFile, Statement } from 'typescript'
+import type { CompilerOptions, Diagnostic, Identifier, SourceFile, Statement } from 'typescript'
 
 type TypeScript = typeof import('typescript')
 const cacheVersion = 5
@@ -22,6 +32,7 @@ export interface GeneratedMarkdown {
 
 export interface GenerateMarkdownOptions {
   cwd?: string
+  followReExports?: boolean
   outDir?: string
   symbols?: string[]
 }
@@ -57,6 +68,7 @@ interface ReExportEntry {
   exportedNames: Set<string>
   exportsAll: boolean
   index: number
+  moduleSpecifier: string
   statement: Statement
 }
 
@@ -82,16 +94,17 @@ export async function generateMarkdownForModule(
   const cwd = resolve(options.cwd ?? process.cwd())
   const inputFile = resolve(cwd, modulePath)
   const symbols = normalizeSymbols(options.symbols ?? [])
+  const followReExports = options.followReExports ?? isPackageJson(inputFile)
 
   if (isPackageJson(inputFile)) {
-    return generateMarkdownForPackage(inputFile, cwd, symbols, options.outDir)
+    return generateMarkdownForPackage(inputFile, cwd, symbols, followReExports, options.outDir)
   }
 
   if (options.outDir) {
     throw new Error('--outDir is only supported for package.json input.')
   }
 
-  return generateMarkdownForDeclarationFile(inputFile, cwd, symbols)
+  return generateMarkdownForDeclarationFile(inputFile, cwd, symbols, followReExports)
 }
 
 export function findNearestTypescript(startDir = process.cwd()) {
@@ -115,6 +128,7 @@ async function generateMarkdownForPackage(
   packageJsonFile: string,
   cwd: string,
   symbols: readonly string[],
+  followReExports: boolean,
   outDir?: string,
 ): Promise<GeneratedMarkdown> {
   if (symbols.length > 0) {
@@ -128,7 +142,7 @@ async function generateMarkdownForPackage(
     entryPoints.map(
       async ({ exportSubpath, inputFile }): Promise<PackageMarkdownEntry & GeneratedMarkdown> => {
         const heading = getPackageEntryHeading(packageName, exportSubpath)
-        return generateMarkdownForDeclarationFile(inputFile, cwd, symbols, heading)
+        return generateMarkdownForDeclarationFile(inputFile, cwd, symbols, followReExports, heading)
       },
     ),
   )
@@ -153,11 +167,14 @@ async function generateMarkdownForDeclarationFile(
   inputFile: string,
   cwd: string,
   symbols: readonly string[],
+  followReExports: boolean,
   heading = basename(inputFile),
 ): Promise<GeneratedMarkdown> {
   assertTypeScriptModule(inputFile)
-  const cacheFile = await getCacheFile(inputFile, cwd, symbols, heading)
-  const cached = await readCache(cacheFile)
+  const cacheFile = followReExports
+    ? undefined
+    : await getCacheFile(inputFile, cwd, symbols, heading)
+  const cached = cacheFile ? await readCache(cacheFile) : undefined
   if (cached) {
     return {
       declaration: cached.declaration,
@@ -171,9 +188,16 @@ async function generateMarkdownForDeclarationFile(
   const declaration = isDeclarationFile(inputFile)
     ? await readFile(inputFile, 'utf8')
     : compileDeclaration(ts, inputFile, cwd)
-  const markdown = declarationToMarkdown(ts, declaration, heading, symbols)
+  const markdown = await declarationToMarkdown(ts, declaration, heading, symbols, {
+    cwd,
+    followReExports,
+    inputFile,
+    visited: new Set([resolve(inputFile)]),
+  })
 
-  await writeCache(cacheFile, { declaration, markdown })
+  if (cacheFile) {
+    await writeCache(cacheFile, { declaration, markdown })
+  }
 
   return {
     declaration,
@@ -227,8 +251,44 @@ function declarationToMarkdown(
   declaration: string,
   heading: string,
   requestedSymbols: readonly string[] = [],
+  context?: RenderContext,
 ) {
-  const sourceFile = ts.createSourceFile('module.d.ts', declaration, ts.ScriptTarget.Latest, true)
+  return renderDeclarationMarkdown(ts, declaration, heading, requestedSymbols, context)
+}
+
+interface RenderContext {
+  cwd: string
+  followReExports: boolean
+  inputFile: string
+  visited: Set<string>
+}
+
+async function renderDeclarationMarkdown(
+  ts: TypeScript,
+  declaration: string,
+  heading: string,
+  requestedSymbols: readonly string[] = [],
+  context?: RenderContext,
+) {
+  const sections = [`# ${heading}`]
+  sections.push(...(await renderDeclarationBody(ts, declaration, requestedSymbols, context)))
+
+  return `${sections.join('\n\n').trimEnd()}\n`
+}
+
+async function renderDeclarationBody(
+  ts: TypeScript,
+  declaration: string,
+  requestedSymbols: readonly string[] = [],
+  context?: RenderContext,
+  exportedNameOverrides: ReadonlyMap<string, string> = new Map(),
+) {
+  const sourceFile = ts.createSourceFile(
+    context?.inputFile ?? 'module.d.ts',
+    declaration,
+    ts.ScriptTarget.Latest,
+    true,
+  )
   const { declarations, imports, reExports } = indexDeclarationFile(ts, declaration, sourceFile)
   const requested = new Set(requestedSymbols)
   const externalExportNames = new Set(reExports.flatMap((entry) => [...entry.exportedNames]))
@@ -242,20 +302,34 @@ function declarationToMarkdown(
     hasUnknownExternalExports,
   )
   const includedReExports = selectReExportEntries(reExports, requested)
+  const followedReExports = context?.followReExports
+    ? await renderFollowedReExportSections(ts, includedReExports, requested, context)
+    : { followed: new Set<ReExportEntry>(), sections: [] }
+  const unresolvedReExports = context?.followReExports
+    ? includedReExports.filter((entry) => !followedReExports.followed.has(entry))
+    : includedReExports
   const importedNames = collectReferencedImportedNames(ts, included, imports, declarations)
   const includedImports = imports.filter((entry) =>
     [...entry.importedNames].some((name) => importedNames.has(name)),
   )
-  const referenceEntries = [...includedImports, ...includedReExports].sort(
+  const referenceEntries = [...includedImports, ...unresolvedReExports].sort(
     (left, right) => left.index - right.index,
   )
-  const sections: string[] = [`# ${heading}`]
+  const sections: string[] = []
 
   if (referenceEntries.length > 0) {
     sections.push(renderCodeBlock(referenceEntries.map((entry) => entry.code).join('\n')))
   }
 
-  for (const entries of groupDeclarationEntries(included)) {
+  const includedWithOverrides = included.map((entry) => ({
+    ...entry,
+    exportedName:
+      exportedNameOverrides.get(entry.exportedName) ??
+      exportedNameOverrides.get(entry.localName) ??
+      entry.exportedName,
+  }))
+
+  for (const entries of groupDeclarationEntries(includedWithOverrides)) {
     const entry = entries[0]!
     const { statement } = entry
     const localName = getStatementName(ts, statement)
@@ -270,7 +344,58 @@ function declarationToMarkdown(
     sections.push(renderDeclarationSection(entry.exportedName, docs, code))
   }
 
-  return `${sections.join('\n\n').trimEnd()}\n`
+  sections.push(...followedReExports.sections)
+
+  return sections
+}
+
+async function renderFollowedReExportSections(
+  ts: TypeScript,
+  reExports: ReExportEntry[],
+  requested: ReadonlySet<string>,
+  context: RenderContext,
+) {
+  const followed = new Set<ReExportEntry>()
+  const sections: string[] = []
+
+  for (const entry of reExports) {
+    if (isNamespaceReExport(ts, entry)) continue
+
+    const targetFile = resolveReExportTarget(
+      ts,
+      context.inputFile,
+      context.cwd,
+      entry.moduleSpecifier,
+    )
+    if (!targetFile || context.visited.has(resolve(targetFile))) continue
+
+    const requestedSourceNames = getReExportRequestedSourceNames(ts, entry, requested)
+    const overrides = getReExportedNameOverrides(ts, entry)
+    const targetDeclaration = isDeclarationFile(targetFile)
+      ? await readFile(targetFile, 'utf8')
+      : compileDeclaration(ts, targetFile, context.cwd)
+    const targetContext = {
+      ...context,
+      inputFile: targetFile,
+      visited: new Set([...context.visited, resolve(targetFile)]),
+    }
+
+    sections.push(
+      ...(await renderDeclarationBody(
+        ts,
+        targetDeclaration,
+        requestedSourceNames,
+        targetContext,
+        overrides,
+      )),
+    )
+    followed.add(entry)
+  }
+
+  return {
+    followed,
+    sections,
+  }
 }
 
 function groupDeclarationEntries(entries: DeclarationEntry[]) {
@@ -340,6 +465,65 @@ function renderDefaultDeclarationCode(ts: TypeScript, entry: DeclarationEntry, c
 
 function ensureExportModifier(code: string) {
   return /^export\b/.test(code) ? code : `export ${code}`
+}
+
+function resolveReExportTarget(
+  ts: TypeScript,
+  inputFile: string,
+  cwd: string,
+  moduleSpecifier: string,
+) {
+  if (!moduleSpecifier.startsWith('.')) return undefined
+
+  let options: CompilerOptions
+  try {
+    options = getCompilerOptions(ts, cwd)
+  } catch {
+    options = {}
+  }
+
+  return ts.resolveModuleName(moduleSpecifier, inputFile, options, ts.sys).resolvedModule
+    ?.resolvedFileName
+}
+
+function getReExportRequestedSourceNames(
+  ts: TypeScript,
+  entry: ReExportEntry,
+  requested: ReadonlySet<string>,
+) {
+  if (entry.exportsAll) {
+    return [...requested]
+  }
+
+  if (!ts.isExportDeclaration(entry.statement)) return []
+
+  const clause = entry.statement.exportClause
+  if (!clause || ts.isNamespaceExport(clause)) return []
+
+  return clause.elements
+    .filter((element) => requested.size === 0 || requested.has(element.name.text))
+    .map((element) => element.propertyName?.text ?? element.name.text)
+}
+
+function getReExportedNameOverrides(ts: TypeScript, entry: ReExportEntry) {
+  const overrides = new Map<string, string>()
+  if (!ts.isExportDeclaration(entry.statement)) return overrides
+
+  const clause = entry.statement.exportClause
+  if (!clause || ts.isNamespaceExport(clause)) return overrides
+
+  for (const element of clause.elements) {
+    overrides.set(element.propertyName?.text ?? element.name.text, element.name.text)
+  }
+
+  return overrides
+}
+
+function isNamespaceReExport(ts: TypeScript, entry: ReExportEntry) {
+  if (!ts.isExportDeclaration(entry.statement)) return false
+
+  const clause = entry.statement.exportClause
+  return clause ? ts.isNamespaceExport(clause) : false
 }
 
 function readPackageEntryPoints(packageJsonFile: string, packageJson: { exports?: unknown }) {
@@ -605,11 +789,14 @@ function indexDeclarationFile(ts: TypeScript, declaration: string, sourceFile: S
   sourceFile.statements.forEach((statement, index) => {
     if (ts.isExportDeclaration(statement)) {
       if (statement.moduleSpecifier) {
+        if (!ts.isStringLiteral(statement.moduleSpecifier)) return
+
         reExports.push({
           code: declaration.slice(statement.getStart(sourceFile), statement.end).trim(),
           exportedNames: collectExportedNames(ts, statement),
           exportsAll: !statement.exportClause,
           index,
+          moduleSpecifier: statement.moduleSpecifier.text,
           statement,
         })
       }
@@ -1081,14 +1268,23 @@ const app = command({
       short: 'o',
       description: 'Write package entry Markdown files to this directory.',
     }),
+    followReExports: flag({
+      long: 'followReExports',
+      description:
+        'Render relative re-exported declarations instead of only printing export-from lines.',
+    }),
     symbols: restPositionals({
       type: string,
       displayName: 'symbol',
       description: 'Export symbol names to include.',
     }),
   },
-  async handler({ module, outDir, symbols }) {
-    const result = await generateMarkdownForModule(module, { outDir, symbols })
+  async handler({ module, followReExports, outDir, symbols }) {
+    const result = await generateMarkdownForModule(module, {
+      followReExports: followReExports || undefined,
+      outDir,
+      symbols,
+    })
     if (!outDir) {
       process.stdout.write(result.markdown)
     }

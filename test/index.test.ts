@@ -220,6 +220,60 @@ export * from './wildcard'
   expect(result.markdown).toContain("export * from './wildcard';")
 })
 
+test('follows relative re-exports to declarations when requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    join(project, 'types.ts'),
+    `
+/** External input docs. */
+export interface ExternalInput {
+  value: string
+}
+`,
+  )
+  await writeFile(
+    join(project, 'factory.ts'),
+    `
+/** Factory docs. */
+export function makeThing(input: string) {
+  return input
+}
+`,
+  )
+  await writeFile(
+    join(project, 'namespace.ts'),
+    `
+/** Namespaced value docs. */
+export const namespaced = true
+`,
+  )
+  await writeFile(
+    inputFile,
+    `
+export type { ExternalInput as Input } from './types'
+export { makeThing } from './factory'
+export * as namespace from './namespace'
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    followReExports: true,
+  })
+
+  expect(result.markdown).not.toContain("export type { ExternalInput as Input } from './types';")
+  expect(result.markdown).toContain('## `Input`')
+  expect(result.markdown).toContain('External input docs.')
+  expect(result.markdown).toContain('export interface Input')
+  expect(result.markdown).toContain('## `makeThing`')
+  expect(result.markdown).toContain('Factory docs.')
+  expect(result.markdown).toContain('export function makeThing(input: string): string;')
+  expect(result.markdown).toContain("export * as namespace from './namespace';")
+  expect(result.markdown).not.toContain('Namespaced value docs.')
+})
+
 test('filters explicit external re-export declarations by requested symbol', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
@@ -241,6 +295,44 @@ export { makeThing } from './factory'
 
   expect(result.markdown).toContain("export { makeThing } from './factory';")
   expect(result.markdown).not.toContain('ExternalInput')
+})
+
+test('follows relative re-exports by default for package inputs', async () => {
+  const project = await createProject()
+  const packageJson = join(project, 'package.json')
+
+  await mkdir(join(project, 'dist'), { recursive: true })
+  await writeFile(
+    join(project, 'dist', 'index.d.ts'),
+    `
+export { createMain } from './main'
+`,
+  )
+  await writeFile(
+    join(project, 'dist', 'main.d.ts'),
+    `
+/** Main API. */
+export declare function createMain(): string
+`,
+  )
+  await writeFile(
+    packageJson,
+    JSON.stringify(
+      {
+        name: 'foo',
+        exports: './dist/index.js',
+      },
+      null,
+      2,
+    ),
+  )
+
+  const result = await generateMarkdownForModule(packageJson, { cwd: project })
+
+  expect(result.markdown).toMatch(/^# foo$/m)
+  expect(result.markdown).not.toContain("export { createMain } from './main';")
+  expect(result.markdown).toContain('## `createMain`')
+  expect(result.markdown).toContain('Main API.')
 })
 
 test('renders package exports from package.json input', async () => {
