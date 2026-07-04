@@ -32,6 +32,7 @@ export interface GeneratedMarkdown {
 
 export interface GenerateMarkdownOptions {
   cwd?: string
+  followImports?: boolean
   followReExports?: boolean
   outDir?: string
   reverseSymbols?: boolean
@@ -59,8 +60,10 @@ interface DeclarationEntry {
 
 interface ImportEntry {
   code: string
+  importedNameAliases: Map<string, string>
   importedNames: Set<string>
   index: number
+  moduleSpecifier: string
   statement: Statement
 }
 
@@ -95,6 +98,7 @@ export async function generateMarkdownForModule(
   const cwd = resolve(options.cwd ?? process.cwd())
   const inputFile = resolve(cwd, modulePath)
   const symbols = normalizeSymbols(options.symbols ?? [])
+  const followImports = options.followImports ?? isPackageJson(inputFile)
   const followReExports = options.followReExports ?? isPackageJson(inputFile)
   const reverseSymbols = options.reverseSymbols ?? false
 
@@ -103,6 +107,7 @@ export async function generateMarkdownForModule(
       inputFile,
       cwd,
       symbols,
+      followImports,
       followReExports,
       reverseSymbols,
       options.outDir,
@@ -117,6 +122,7 @@ export async function generateMarkdownForModule(
     inputFile,
     cwd,
     symbols,
+    followImports,
     followReExports,
     reverseSymbols,
   )
@@ -143,6 +149,7 @@ async function generateMarkdownForPackage(
   packageJsonFile: string,
   cwd: string,
   symbols: readonly string[],
+  followImports: boolean,
   followReExports: boolean,
   reverseSymbols: boolean,
   outDir?: string,
@@ -162,6 +169,7 @@ async function generateMarkdownForPackage(
           inputFile,
           cwd,
           symbols,
+          followImports,
           followReExports,
           reverseSymbols,
           heading,
@@ -190,14 +198,16 @@ async function generateMarkdownForDeclarationFile(
   inputFile: string,
   cwd: string,
   symbols: readonly string[],
+  followImports: boolean,
   followReExports: boolean,
   reverseSymbols: boolean,
   heading = basename(inputFile),
 ): Promise<GeneratedMarkdown> {
   assertTypeScriptModule(inputFile)
-  const cacheFile = followReExports
-    ? undefined
-    : await getCacheFile(inputFile, cwd, symbols, heading, reverseSymbols)
+  const cacheFile =
+    followImports || followReExports
+      ? undefined
+      : await getCacheFile(inputFile, cwd, symbols, heading, reverseSymbols)
   const cached = cacheFile ? await readCache(cacheFile) : undefined
   if (cached) {
     return {
@@ -214,6 +224,7 @@ async function generateMarkdownForDeclarationFile(
     : compileDeclaration(ts, inputFile, cwd)
   const markdown = await declarationToMarkdown(ts, declaration, heading, symbols, {
     cwd,
+    followImports,
     followReExports,
     inputFile,
     reverseSymbols,
@@ -283,6 +294,7 @@ function declarationToMarkdown(
 
 interface RenderContext {
   cwd: string
+  followImports: boolean
   followReExports: boolean
   inputFile: string
   reverseSymbols: boolean
@@ -338,7 +350,13 @@ async function renderDeclarationBody(
   const includedImports = imports.filter((entry) =>
     [...entry.importedNames].some((name) => importedNames.has(name)),
   )
-  const referenceEntries = [...includedImports, ...unresolvedReExports].sort(
+  const followedImports = context?.followImports
+    ? await renderFollowedImportSections(ts, includedImports, importedNames, context)
+    : { followed: new Set<ImportEntry>(), sections: [] }
+  const unresolvedImports = context?.followImports
+    ? includedImports.filter((entry) => !followedImports.followed.has(entry))
+    : includedImports
+  const referenceEntries = [...unresolvedImports, ...unresolvedReExports].sort(
     (left, right) => left.index - right.index,
   )
   const sections: string[] = []
@@ -372,10 +390,63 @@ async function renderDeclarationBody(
     declarationSections.push(renderDeclarationSection(entry.exportedName, docs, code))
   }
 
-  const symbolSections = [...declarationSections, ...followedReExports.sections]
+  const symbolSections = [
+    ...declarationSections,
+    ...followedImports.sections,
+    ...followedReExports.sections,
+  ]
   sections.push(...(context?.reverseSymbols ? symbolSections.toReversed() : symbolSections))
 
   return sections
+}
+
+async function renderFollowedImportSections(
+  ts: TypeScript,
+  imports: ImportEntry[],
+  importedNames: ReadonlySet<string>,
+  context: RenderContext,
+) {
+  const followed = new Set<ImportEntry>()
+  const sections: string[] = []
+
+  for (const entry of imports) {
+    const requestedSourceNames = getImportRequestedSourceNames(entry, importedNames)
+    if (requestedSourceNames.length === 0) continue
+
+    const targetFile = resolveModuleTarget(
+      ts,
+      context.inputFile,
+      context.cwd,
+      entry.moduleSpecifier,
+    )
+    if (!targetFile || context.visited.has(resolve(targetFile))) continue
+
+    const overrides = getImportedNameOverrides(entry, importedNames)
+    const targetDeclaration = isDeclarationFile(targetFile)
+      ? await readFile(targetFile, 'utf8')
+      : compileDeclaration(ts, targetFile, context.cwd)
+    const targetContext = {
+      ...context,
+      inputFile: targetFile,
+      visited: new Set([...context.visited, resolve(targetFile)]),
+    }
+
+    sections.push(
+      ...(await renderDeclarationBody(
+        ts,
+        targetDeclaration,
+        requestedSourceNames,
+        targetContext,
+        overrides,
+      )),
+    )
+    followed.add(entry)
+  }
+
+  return {
+    followed,
+    sections,
+  }
 }
 
 async function renderFollowedReExportSections(
@@ -390,7 +461,7 @@ async function renderFollowedReExportSections(
   for (const entry of reExports) {
     if (isNamespaceReExport(ts, entry)) continue
 
-    const targetFile = resolveReExportTarget(
+    const targetFile = resolveModuleTarget(
       ts,
       context.inputFile,
       context.cwd,
@@ -496,7 +567,7 @@ function ensureExportModifier(code: string) {
   return /^export\b/.test(code) ? code : `export ${code}`
 }
 
-function resolveReExportTarget(
+function resolveModuleTarget(
   ts: TypeScript,
   inputFile: string,
   cwd: string,
@@ -513,6 +584,24 @@ function resolveReExportTarget(
 
   return ts.resolveModuleName(moduleSpecifier, inputFile, options, ts.sys).resolvedModule
     ?.resolvedFileName
+}
+
+function getImportRequestedSourceNames(entry: ImportEntry, importedNames: ReadonlySet<string>) {
+  return [...entry.importedNameAliases]
+    .filter(([localName]) => importedNames.has(localName))
+    .map(([, sourceName]) => sourceName)
+}
+
+function getImportedNameOverrides(entry: ImportEntry, importedNames: ReadonlySet<string>) {
+  const overrides = new Map<string, string>()
+
+  for (const [localName, sourceName] of entry.importedNameAliases) {
+    if (importedNames.has(localName) && localName !== sourceName) {
+      overrides.set(sourceName, localName)
+    }
+  }
+
+  return overrides
 }
 
 function getReExportRequestedSourceNames(
@@ -833,12 +922,16 @@ function indexDeclarationFile(ts: TypeScript, declaration: string, sourceFile: S
     }
 
     if (ts.isImportDeclaration(statement)) {
-      const importedNames = collectImportedNames(ts, statement)
-      if (importedNames.size > 0) {
+      if (!statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) return
+
+      const importedNameAliases = collectImportedNameAliases(ts, statement)
+      if (importedNameAliases.size > 0) {
         imports.push({
           code: declaration.slice(statement.getStart(sourceFile), statement.end).trim(),
-          importedNames,
+          importedNameAliases,
+          importedNames: new Set(importedNameAliases.keys()),
           index,
+          moduleSpecifier: statement.moduleSpecifier.text,
           statement,
         })
       }
@@ -886,27 +979,26 @@ function collectExportedNames(ts: TypeScript, statement: Statement) {
   return names
 }
 
-function collectImportedNames(ts: TypeScript, statement: Statement) {
-  const names = new Set<string>()
+function collectImportedNameAliases(ts: TypeScript, statement: Statement) {
+  const names = new Map<string, string>()
   if (!ts.isImportDeclaration(statement)) return names
 
   const clause = statement.importClause
   if (!clause) return names
 
   if (clause.name) {
-    names.add(clause.name.text)
+    names.set(clause.name.text, 'default')
   }
 
   const bindings = clause.namedBindings
   if (!bindings) return names
 
   if (ts.isNamespaceImport(bindings)) {
-    names.add(bindings.name.text)
     return names
   }
 
   for (const element of bindings.elements) {
-    names.add(element.name.text)
+    names.set(element.name.text, element.propertyName?.text ?? element.name.text)
   }
 
   return names
@@ -1300,6 +1392,10 @@ const app = command({
       short: 'o',
       description: 'Write package entry Markdown files to this directory.',
     }),
+    followImports: flag({
+      long: 'followImports',
+      description: 'Render relative imported declarations instead of only printing import lines.',
+    }),
     followReExports: flag({
       long: 'followReExports',
       description:
@@ -1315,8 +1411,9 @@ const app = command({
       description: 'Export symbol names to include.',
     }),
   },
-  async handler({ module, followReExports, outDir, reverseSymbols, symbols }) {
+  async handler({ module, followImports, followReExports, outDir, reverseSymbols, symbols }) {
     const result = await generateMarkdownForModule(module, {
+      followImports: followImports || undefined,
       followReExports: followReExports || undefined,
       outDir,
       reverseSymbols,

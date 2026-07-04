@@ -10,6 +10,7 @@ export interface GeneratedMarkdown {
 }
 export interface GenerateMarkdownOptions {
   cwd?: string;
+  followImports?: boolean;
   followReExports?: boolean;
   outDir?: string;
   reverseSymbols?: boolean;

@@ -50,9 +50,10 @@ Print documentation for every declaration entry point in a package export map:
 exports-md package.json
 ```
 
-Package inputs follow relative re-exports to their declarations by default. For a module input, enable the same behavior explicitly:
+Package inputs follow relative imports and re-exports to their declarations by default. For a module input, enable either behavior explicitly:
 
 ```sh
+exports-md src/index.ts --followImports
 exports-md src/index.ts --followReExports
 ```
 
@@ -70,6 +71,6 @@ The tool emits declarations in memory, parses the resulting `.d.ts`, and renders
 
 When the input is `package.json`, the tool reads the `exports` field and renders each declaration entry point with a separate H1 based on the package name and export subpath, such as `foo` for `.` and `foo/bar` for `./bar`. Export-map entries with `types` targets use those targets. Entries without `types` targets use string `.js` or `.mjs` targets rewritten to `.d.ts`. With `--outDir`, each entry point is written as a `.md` file under the output directory, preserving the entry point folder structure relative to their shared common root.
 
-Imported symbols are not expanded recursively. If a rendered declaration references an imported name, the relevant import line is included in the Markdown output. Module inputs include re-export `export ... from` lines by default. With `--followReExports`, or for package inputs by default, relative re-exports are followed to their declarations; non-relative re-exports are still rendered as reference lines.
+Module inputs include import and re-export reference lines by default. With `--followImports`, or for package inputs by default, relative imports referenced by rendered declarations are followed to their declarations. With `--followReExports`, or for package inputs by default, relative re-exports are followed to their declarations. Non-relative package imports, non-relative package re-exports, and namespace imports/re-exports are still rendered as reference lines.
 
-Rendered Markdown is cached in the system temp directory using the input path, source content, tsconfig content, requested symbols, heading, package version, and renderer version. Output that follows re-exports is not cached, because it depends on additional declaration files.
+Rendered Markdown is cached in the system temp directory using the input path, source content, tsconfig content, requested symbols, heading, package version, and renderer version. Output that follows imports or re-exports is not cached, because it depends on additional declaration files.

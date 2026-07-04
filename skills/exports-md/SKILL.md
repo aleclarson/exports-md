@@ -27,7 +27,13 @@ Query specific exported symbols with positional names after the module path:
 exports-md path/to/module.ts ExportA ExportB
 ```
 
-Symbol queries include the requested exports plus local declaration dependencies needed to understand them. Symbol queries are for module inputs, not `package.json` inputs. Imported symbols are represented by their import line only. Module re-exports are represented by their `export ... from` line unless `--followReExports` is used; when following is enabled, only relative re-exports are expanded, while non-relative package re-exports remain reference lines.
+Symbol queries include the requested exports plus local declaration dependencies needed to understand them. Symbol queries are for module inputs, not `package.json` inputs. Imported symbols are represented by their import line unless `--followImports` is used. Module re-exports are represented by their `export ... from` line unless `--followReExports` is used. When following is enabled, only relative imports or re-exports are expanded, while non-relative package references remain reference lines.
+
+Follow relative imported declarations when imported API shape is more useful than import reference lines:
+
+```sh
+exports-md path/to/module.ts --followImports
+```
 
 Print rendered symbol sections in reverse order when a consumer benefits from bottom-up or newest-last API context:
 
@@ -43,9 +49,10 @@ exports-md package.json
 
 Package output uses H1 headings based on the package name and export subpath, such as `foo` for `.` and `foo/bar` for `./bar`.
 
-Package inputs follow relative re-exports to their declarations by default. For module inputs, opt in when re-exported declarations are more useful than the re-export statements:
+Package inputs follow relative imports and re-exports to their declarations by default. For module inputs, opt in when imported or re-exported declarations are more useful than the reference statements:
 
 ```sh
+exports-md path/to/module.ts --followImports
 exports-md path/to/module.ts --followReExports
 ```
 
@@ -61,7 +68,7 @@ exports-md package.json --outDir docs/api
 - Treat the output as API context, not behavioral proof. Read source or tests when implementation behavior, side effects, runtime control flow, or invariants matter.
 - Keep output in conversation context when possible. Write a file only when the user asks for one or when another tool needs a path.
 - Use symbol queries for focused work to avoid loading unrelated API surface.
-- If output is stale or surprising, rerun the command from the intended project root. The tool caches rendered Markdown by input path, source content, tsconfig content, requested symbols, heading, package version, and renderer version. Output that follows re-exports is not cached.
+- If output is stale or surprising, rerun the command from the intended project root. The tool caches rendered Markdown by input path, source content, tsconfig content, requested symbols, heading, package version, and renderer version. Output that follows imports or re-exports is not cached.
 
 ## Failure Modes
 

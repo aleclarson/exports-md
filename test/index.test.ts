@@ -570,6 +570,93 @@ export function unused(): string {
   expect(result.markdown).not.toContain('unused')
 })
 
+test('follows relative imports to declarations when requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    join(project, 'types.ts'),
+    `
+/** External input docs. */
+export interface ExternalInput {
+  value: string
+}
+
+/** Unused external docs. */
+export interface UnusedExternal {
+  value: string
+}
+`,
+  )
+  await writeFile(
+    inputFile,
+    `
+import type { ExternalInput as Input } from './types'
+
+/** Creates an input value. */
+export function createInput(input: Input): Input {
+  return input
+}
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    followImports: true,
+    symbols: ['createInput'],
+  })
+
+  expect(result.markdown).not.toContain("import type { ExternalInput as Input } from './types';")
+  expect(result.markdown).toContain('## `createInput`')
+  expect(result.markdown).toContain('## `Input`')
+  expect(result.markdown).toContain('External input docs.')
+  expect(result.markdown).toContain('export interface Input')
+  expect(result.markdown).not.toContain('UnusedExternal')
+})
+
+test('follows relative imports by default for package inputs', async () => {
+  const project = await createProject()
+  const packageJson = join(project, 'package.json')
+
+  await mkdir(join(project, 'dist'), { recursive: true })
+  await writeFile(
+    join(project, 'dist', 'types.d.ts'),
+    `
+/** Package input docs. */
+export interface PackageInput {
+  value: string
+}
+`,
+  )
+  await writeFile(
+    join(project, 'dist', 'index.d.ts'),
+    `
+import type { PackageInput } from './types'
+
+/** Creates a package input. */
+export declare function createPackageInput(input: PackageInput): PackageInput
+`,
+  )
+  await writeFile(
+    packageJson,
+    JSON.stringify(
+      {
+        name: 'foo',
+        exports: './dist/index.js',
+      },
+      null,
+      2,
+    ),
+  )
+
+  const result = await generateMarkdownForModule(packageJson, { cwd: project })
+
+  expect(result.markdown).not.toContain("import type { PackageInput } from './types';")
+  expect(result.markdown).toContain('## `createPackageInput`')
+  expect(result.markdown).toContain('## `PackageInput`')
+  expect(result.markdown).toContain('Package input docs.')
+})
+
 test('fails clearly when a requested export is missing', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
