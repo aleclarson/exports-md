@@ -1,6 +1,6 @@
 {
   "name": "exports-md",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Generate Markdown API docs from exported TypeScript declarations.",
   "license": "MIT OR Apache-2.0",
   "author": "Alec Larson",
