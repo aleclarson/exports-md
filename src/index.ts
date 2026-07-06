@@ -20,7 +20,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import type { CompilerOptions, Diagnostic, Identifier, SourceFile, Statement } from 'typescript'
 
 type TypeScript = typeof import('typescript')
-const cacheVersion = 5
+const cacheVersion = 6
 const packageVersion = '0.0.0'
 
 export interface GeneratedMarkdown {
@@ -256,7 +256,7 @@ function loadWorkspaceTypescript(cwd = process.cwd()): TypeScript {
 }
 
 function compileDeclaration(ts: TypeScript, inputFile: string, cwd = process.cwd()) {
-  const options = getCompilerOptions(ts, cwd)
+  const options = getCompilerOptions(ts, inputFile, cwd)
   const host = ts.createCompilerHost(options, true)
   const outputs = new Map<string, string>()
   let declaration: string | undefined
@@ -725,7 +725,7 @@ function resolveModuleTarget(
 
   let options: CompilerOptions
   try {
-    options = getCompilerOptions(ts, cwd)
+    options = getCompilerOptions(ts, inputFile, cwd)
   } catch {
     options = {}
   }
@@ -980,8 +980,8 @@ function assertTypeScriptModule(inputFile: string) {
   }
 }
 
-function getCompilerOptions(ts: TypeScript, cwd: string) {
-  const configPath = ts.findConfigFile(cwd, ts.sys.fileExists)
+function getCompilerOptions(ts: TypeScript, inputFile: string, cwd: string) {
+  const configPath = findTsConfig(inputFile)
   const baseOptions = configPath ? readConfigOptions(ts, configPath, cwd) : {}
 
   return {
@@ -1423,7 +1423,7 @@ async function getCacheFile(
   reverseSymbols: boolean,
 ) {
   const source = await readFile(inputFile, 'utf8')
-  const configPath = findTsConfig(inputFile, cwd)
+  const configPath = findTsConfig(inputFile)
   const config = configPath ? readFileSync(configPath, 'utf8') : ''
   const hash = createHash('sha256')
     .update(packageVersion)
@@ -1448,16 +1448,15 @@ async function getCacheFile(
   return join(tmpdir(), 'exports-md', `${hash}.json`)
 }
 
-function findTsConfig(inputFile: string, cwd: string) {
+function findTsConfig(inputFile: string) {
   let dir = dirname(inputFile)
-  const stop = dirname(resolve(cwd))
 
   while (true) {
     const candidate = join(dir, 'tsconfig.json')
     if (isFile(candidate)) return candidate
 
     const parent = dirname(dir)
-    if (dir === parent || dir === stop) return undefined
+    if (dir === parent) return undefined
     dir = parent
   }
 }

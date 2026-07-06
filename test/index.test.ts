@@ -66,6 +66,40 @@ test('reuses cached markdown for unchanged inputs', async () => {
   })
 })
 
+test('uses the nearest tsconfig from the module parent directory', async () => {
+  const project = await createProject()
+  const packageDir = join(project, 'packages', 'demo')
+  const inputFile = join(packageDir, 'api.ts')
+  await mkdir(packageDir, { recursive: true })
+  await writeFile(
+    join(packageDir, 'tsconfig.json'),
+    JSON.stringify(
+      {
+        compilerOptions: {
+          strict: false,
+          types: [],
+        },
+      },
+      null,
+      2,
+    ),
+  )
+  await writeFile(
+    inputFile,
+    `
+/** Returns the input value. */
+export function identity(value) {
+  return value
+}
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, { cwd: project })
+
+  expect(result.markdown).toContain('## `identity`')
+  expect(result.markdown).toContain('export function identity(value: any): any;')
+})
+
 test('documents symbols exported through an export list', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
