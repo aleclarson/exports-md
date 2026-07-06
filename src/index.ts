@@ -326,6 +326,7 @@ async function renderDeclarationBody(
   requestedSymbols: readonly string[] = [],
   context?: RenderContext,
   exportedNameOverrides: ReadonlyMap<string, string> = new Map(),
+  renderExportModifiers = true,
 ) {
   const sourceFile = ts.createSourceFile(
     context?.inputFile ?? 'module.d.ts',
@@ -405,7 +406,7 @@ async function renderDeclarationBody(
     const comment = getLeadingTsDoc(ts, declaration, documentedEntry.statement)
     const docs = comment ? renderTsDoc(parseTsDoc(comment)) : ''
     const code = entries
-      .map((entry) => renderDeclarationCode(ts, entry, exportedNameOverrides))
+      .map((entry) => renderDeclarationCode(ts, entry, exportedNameOverrides, renderExportModifiers))
       .join('\n')
 
     declarationSections.push(renderDeclarationSection(entry.exportedName, docs, code))
@@ -479,6 +480,7 @@ async function renderFollowedImportSections(
         requestedSourceNames,
         targetContext,
         overrides,
+        false,
       )),
     )
     followed.add(entry)
@@ -621,6 +623,7 @@ function renderDeclarationCode(
   ts: TypeScript,
   entry: DeclarationEntry,
   nameOverrides: ReadonlyMap<string, string> = new Map(),
+  renderExportModifier = true,
 ) {
   const replacements = new Map(nameOverrides)
 
@@ -637,6 +640,7 @@ function renderDeclarationCode(
 
   code = stripDeclareModifier(code)
 
+  if (!renderExportModifier) return stripExportModifier(code)
   if (!entry.isExported) return code
   if (entry.exportedName === 'default') return renderDefaultDeclarationCode(ts, entry, code)
 
@@ -694,6 +698,10 @@ function collectStatementTypeParameterNames(ts: TypeScript, statement: Statement
 
 function stripDeclareModifier(code: string) {
   return code.replace(/^export\s+declare\s+/, 'export ').replace(/^declare\s+/, '')
+}
+
+function stripExportModifier(code: string) {
+  return code.replace(/^export\s+default\s+/, '').replace(/^export\s+/, '')
 }
 
 function renderDefaultDeclarationCode(ts: TypeScript, entry: DeclarationEntry, code: string) {

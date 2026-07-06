@@ -740,7 +740,8 @@ export function createInput(input: Input): Input {
   expect(result.markdown).toContain('## `createInput`')
   expect(result.markdown).toContain('## `Input`')
   expect(result.markdown).toContain('External input docs.')
-  expect(result.markdown).toContain('export interface Input')
+  expect(result.markdown).toContain('interface Input')
+  expect(result.markdown).not.toContain('export interface Input')
   expect(result.markdown).not.toContain('UnusedExternal')
 })
 
@@ -782,7 +783,8 @@ export declare function storeRecord(input: JsonRecord): JsonRecord
   expect(result.markdown).not.toContain('## `j`')
   expect(result.markdown).toContain('## `JsonRecord`')
   expect(result.markdown).not.toContain('## `A`')
-  expect(result.markdown).toContain('export type JsonRecord = Record<string, JsonValue>')
+  expect(result.markdown).toContain('type JsonRecord = Record<string, JsonValue>')
+  expect(result.markdown).not.toContain('export type JsonRecord')
   expect(result.markdown).not.toContain('Record<string, j>')
 })
 
@@ -827,6 +829,7 @@ export declare function createPackageInput(input: PackageInput): PackageInput
   expect(result.markdown).toContain('## `createPackageInput`')
   expect(result.markdown).toContain('## `PackageInput`')
   expect(result.markdown).toContain('Package input docs.')
+  expect(result.markdown).not.toContain('export interface PackageInput')
 })
 
 test('fails clearly when a requested export is missing', async () => {
