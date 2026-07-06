@@ -1539,6 +1539,11 @@ const app = command({
       short: 'o',
       description: 'Write package entry Markdown files to this directory.',
     }),
+    follow: flag({
+      long: 'follow',
+      short: 'f',
+      description: 'Render relative imported and re-exported declarations.',
+    }),
     followImports: flag({
       long: 'followImports',
       description: 'Render relative imported declarations instead of only printing import lines.',
@@ -1558,10 +1563,10 @@ const app = command({
       description: 'Export symbol names to include.',
     }),
   },
-  async handler({ module, followImports, followReExports, outDir, reverseSymbols, symbols }) {
+  async handler({ module, follow, followImports, followReExports, outDir, reverseSymbols, symbols }) {
     const result = await generateMarkdownForModule(module, {
-      followImports: followImports || undefined,
-      followReExports: followReExports || undefined,
+      followImports: follow || followImports || undefined,
+      followReExports: follow || followReExports || undefined,
       outDir,
       reverseSymbols,
       symbols,
