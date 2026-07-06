@@ -1546,15 +1546,18 @@ const app = command({
     }),
     followImports: flag({
       long: 'followImports',
+      short: 'i',
       description: 'Render relative imported declarations instead of only printing import lines.',
     }),
     followReExports: flag({
       long: 'followReExports',
+      short: 'e',
       description:
         'Render relative re-exported declarations instead of only printing export-from lines.',
     }),
     reverseSymbols: flag({
       long: 'reverseSymbols',
+      short: 'r',
       description: 'Print rendered symbol sections in reverse order.',
     }),
     symbols: restPositionals({

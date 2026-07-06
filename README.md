@@ -35,7 +35,7 @@ exports-md src/index.ts generateMarkdownForModule findNearestTypescript
 Print symbol sections in reverse order:
 
 ```sh
-exports-md src/index.ts --reverseSymbols
+exports-md src/index.ts -r
 ```
 
 Write the Markdown to a file with normal shell redirection:
@@ -53,15 +53,15 @@ exports-md package.json
 Package inputs follow relative imports and re-exports to their declarations by default. For a module input, enable either behavior explicitly:
 
 ```sh
-exports-md src/index.ts --follow
-exports-md src/index.ts --followImports
-exports-md src/index.ts --followReExports
+exports-md src/index.ts -f
+exports-md src/index.ts -i
+exports-md src/index.ts -e
 ```
 
 Write package entry point docs to an output directory:
 
 ```sh
-exports-md package.json --outDir docs/api
+exports-md package.json -o docs/api
 ```
 
 ## How it works
