@@ -547,6 +547,63 @@ export interface FeatureOptions {
   expect(result.markdown).toContain('## `FeatureOptions`')
 })
 
+test('renders package property docs below declaration code blocks', async () => {
+  const project = await createProject()
+  const packageJson = join(project, 'package.json')
+
+  await mkdir(join(project, 'dist'), { recursive: true })
+  await writeFile(
+    join(project, 'dist', 'index.d.ts'),
+    `
+/** Feature options. */
+export interface FeatureOptions {
+  /** Enables the feature. */
+  enabled: boolean
+  nested: {
+    /**
+     * Nested value docs.
+     *
+     * @remarks Keep this visible outside the code block.
+     */
+    value: string
+  }
+}
+`,
+  )
+  await writeFile(
+    packageJson,
+    JSON.stringify(
+      {
+        name: 'foo',
+        exports: './dist/index.js',
+      },
+      null,
+      2,
+    ),
+  )
+
+  const result = await generateMarkdownForModule(packageJson, { cwd: project })
+
+  expect(result.markdown).toContain('```ts\nexport interface FeatureOptions {\n  enabled: boolean')
+  expect(result.markdown).not.toContain('/** Enables the feature. */')
+  expect(result.markdown).not.toContain('Nested value docs.\n     *')
+  expect(result.markdown).toContain(
+    [
+      '**Properties**',
+      '',
+      '- `enabled`',
+      '  Enables the feature.',
+      '',
+      '- `value`',
+      '  Nested value docs.',
+      '  ',
+      '  **Remarks**',
+      '  ',
+      '  Keep this visible outside the code block.',
+    ].join('\n'),
+  )
+})
+
 test('prints package entry symbols in reverse order when requested', async () => {
   const project = await createProject()
   const packageJson = join(project, 'package.json')

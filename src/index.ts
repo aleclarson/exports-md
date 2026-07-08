@@ -6,7 +6,14 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
-import type { CompilerOptions, Diagnostic, Identifier, SourceFile, Statement } from 'typescript'
+import type {
+  CompilerOptions,
+  Diagnostic,
+  Identifier,
+  Node,
+  SourceFile,
+  Statement,
+} from 'typescript'
 
 type TypeScript = typeof import('typescript')
 const cacheVersion = 6
@@ -87,6 +94,17 @@ interface PackageMarkdownEntry {
 interface PackageEntryPoint {
   exportSubpath: string
   inputFile: string
+}
+
+interface PropertyDoc {
+  name: string
+  docs: string
+}
+
+interface CodeEdit {
+  end: number
+  replacement: string
+  start: number
 }
 
 interface CliNode {
@@ -238,6 +256,7 @@ async function generateMarkdownForPackage(
           reverseSymbols,
           heading,
           symbols.length > 0 || allowMissingSymbols,
+          true,
         )
       },
     ),
@@ -281,10 +300,11 @@ async function generateMarkdownForDeclarationFile(
   reverseSymbols: boolean,
   heading = basename(inputFile),
   allowMissingSymbols = false,
+  renderPropertyDocs = false,
 ): Promise<GeneratedMarkdown & { foundSymbols: Set<string> }> {
   assertTypeScriptModule(inputFile)
   const cacheFile =
-    allowMissingSymbols || followImports || followReExports
+    renderPropertyDocs || allowMissingSymbols || followImports || followReExports
       ? undefined
       : await getCacheFile(inputFile, cwd, symbols, heading, reverseSymbols)
   const cached = cacheFile ? await readCache(cacheFile) : undefined
@@ -315,6 +335,7 @@ async function generateMarkdownForDeclarationFile(
           followImports,
           followReExports,
           inputFile,
+          renderPropertyDocs,
           reverseSymbols,
           visited: new Set([resolve(inputFile)]),
         })
@@ -418,6 +439,7 @@ interface RenderContext {
   followImports: boolean
   followReExports: boolean
   inputFile: string
+  renderPropertyDocs: boolean
   reverseSymbols: boolean
   visited: Set<string>
 }
@@ -520,13 +542,25 @@ async function renderDeclarationBody(
       entries.find((entry) => getLeadingTsDoc(ts, declaration, entry.statement)) ?? entry
     const comment = getLeadingTsDoc(ts, declaration, documentedEntry.statement)
     const docs = comment ? renderTsDoc(parseTsDoc(comment)) : ''
+    const propertyDocs = context?.renderPropertyDocs
+      ? entries.flatMap((entry) => collectPropertyDocs(ts, declaration, entry.statement))
+      : []
     const code = entries
-      .map((entry) =>
-        renderDeclarationCode(ts, entry, exportedNameOverrides, renderExportModifiers),
-      )
+      .map((entry) => {
+        const propertyDocCommentEdits = context?.renderPropertyDocs
+          ? collectPropertyDocCommentEdits(ts, declaration, entry.statement)
+          : []
+        return renderDeclarationCode(
+          ts,
+          entry,
+          exportedNameOverrides,
+          renderExportModifiers,
+          propertyDocCommentEdits,
+        )
+      })
       .join('\n')
 
-    declarationSections.push(renderDeclarationSection(entry.exportedName, docs, code))
+    declarationSections.push(renderDeclarationSection(entry.exportedName, docs, code, propertyDocs))
   }
 
   const symbolSections = [
@@ -741,6 +775,7 @@ function renderDeclarationCode(
   entry: DeclarationEntry,
   nameOverrides: ReadonlyMap<string, string> = new Map(),
   renderExportModifier = true,
+  edits: readonly CodeEdit[] = [],
 ) {
   const replacements = new Map(nameOverrides)
 
@@ -752,8 +787,10 @@ function renderDeclarationCode(
     replacements.set(entry.localName, entry.exportedName)
   }
 
-  let code =
-    replacements.size > 0 ? replaceDeclarationIdentifiers(ts, entry, replacements) : entry.code
+  let code = applyCodeEdits(entry.code, [
+    ...edits,
+    ...(replacements.size > 0 ? collectIdentifierReplacementEdits(ts, entry, replacements) : []),
+  ])
 
   code = stripDeclareModifier(code)
 
@@ -764,7 +801,7 @@ function renderDeclarationCode(
   return ensureExportModifier(code)
 }
 
-function replaceDeclarationIdentifiers(
+function collectIdentifierReplacementEdits(
   ts: TypeScript,
   entry: DeclarationEntry,
   replacements: ReadonlyMap<string, string>,
@@ -772,7 +809,7 @@ function replaceDeclarationIdentifiers(
   const sourceFile = entry.statement.getSourceFile()
   const statementStart = entry.statement.getStart(sourceFile)
   const typeParameters = collectStatementTypeParameterNames(ts, entry.statement)
-  const edits = collectIdentifiers(ts, entry.statement)
+  return collectIdentifiers(ts, entry.statement)
     .map((identifier) => {
       if (typeParameters.has(identifier.text)) return
 
@@ -786,14 +823,77 @@ function replaceDeclarationIdentifiers(
       }
     })
     .filter((edit): edit is NonNullable<typeof edit> => Boolean(edit))
-    .sort((left, right) => right.start - left.start)
+}
 
-  let code = entry.code
-  for (const edit of edits) {
-    code = `${code.slice(0, edit.start)}${edit.replacement}${code.slice(edit.end)}`
+function applyCodeEdits(code: string, edits: readonly CodeEdit[]) {
+  let edited = code
+  for (const edit of [...edits].sort((left, right) => right.start - left.start)) {
+    edited = `${edited.slice(0, edit.start)}${edit.replacement}${edited.slice(edit.end)}`
   }
 
-  return code
+  return edited
+}
+
+function collectPropertyDocs(ts: TypeScript, declaration: string, statement: Statement) {
+  return collectDocumentedPropertyMembers(ts, declaration, statement).map(({ comment, name }) => ({
+    docs: renderTsDoc(parseTsDoc(comment.raw)),
+    name,
+  }))
+}
+
+function collectPropertyDocCommentEdits(ts: TypeScript, declaration: string, statement: Statement) {
+  const sourceFile = statement.getSourceFile()
+  const statementStart = statement.getStart(sourceFile)
+
+  return collectDocumentedPropertyMembers(ts, declaration, statement).map(({ comment, member }) => {
+    const leadingWhitespace = declaration.slice(member.getFullStart(), comment.start)
+
+    return {
+      end: member.getStart(sourceFile) - statementStart,
+      replacement: leadingWhitespace,
+      start: member.getFullStart() - statementStart,
+    }
+  })
+}
+
+function collectDocumentedPropertyMembers(
+  ts: TypeScript,
+  declaration: string,
+  statement: Statement,
+) {
+  const sourceFile = statement.getSourceFile()
+  const docs: {
+    comment: { raw: string; start: number }
+    member: Node
+    name: string
+  }[] = []
+
+  function visit(node: Node) {
+    if (ts.isInterfaceDeclaration(node) || ts.isTypeLiteralNode(node)) {
+      for (const member of node.members) {
+        if (!ts.isPropertySignature(member) && !ts.isMethodSignature(member)) continue
+
+        const name = getPropertyDocName(ts, member.name, sourceFile)
+        const comment = getLeadingTsDocComment(ts, declaration, member)
+        if (!name || !comment) continue
+
+        docs.push({ comment, member, name })
+      }
+    }
+
+    ts.forEachChild(node, visit)
+  }
+
+  visit(statement)
+  return docs
+}
+
+function getPropertyDocName(ts: TypeScript, name: Node, sourceFile: SourceFile) {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+    return name.text
+  }
+
+  return name.getText(sourceFile)
 }
 
 function collectStatementTypeParameterNames(ts: TypeScript, statement: Statement) {
@@ -1430,12 +1530,21 @@ function hasModifier(ts: TypeScript, statement: Statement, kind: number) {
   return ts.getModifiers(statement)?.some((modifier) => modifier.kind === kind) ?? false
 }
 
-function getLeadingTsDoc(ts: TypeScript, text: string, statement: Statement) {
-  const comments = ts.getLeadingCommentRanges(text, statement.getFullStart()) ?? []
+function getLeadingTsDoc(ts: TypeScript, text: string, node: Node) {
+  return getLeadingTsDocComment(ts, text, node)?.raw
+}
+
+function getLeadingTsDocComment(ts: TypeScript, text: string, node: Node) {
+  const comments = ts.getLeadingCommentRanges(text, node.getFullStart()) ?? []
 
   for (const comment of comments.toReversed()) {
     const raw = text.slice(comment.pos, comment.end)
-    if (raw.startsWith('/**')) return raw
+    if (raw.startsWith('/**')) {
+      return {
+        raw,
+        start: comment.pos,
+      }
+    }
   }
 }
 
@@ -1532,8 +1641,34 @@ function renderNamedTags(title: string, tags: TsDocTag[]) {
   return `**${title}**\n\n${lines.join('\n')}`
 }
 
-function renderDeclarationSection(name: string, docs: string, code: string) {
-  return [`## \`${name}\``, docs, renderCodeBlock(code)].filter(Boolean).join('\n\n')
+function renderDeclarationSection(
+  name: string,
+  docs: string,
+  code: string,
+  propertyDocs: readonly PropertyDoc[] = [],
+) {
+  return [`## \`${name}\``, docs, renderCodeBlock(code), renderPropertyDocs(propertyDocs)]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function renderPropertyDocs(propertyDocs: readonly PropertyDoc[]) {
+  if (propertyDocs.length === 0) return ''
+
+  const properties = propertyDocs
+    .filter((propertyDoc) => propertyDoc.docs)
+    .map((propertyDoc) => {
+      const indentedDocs = propertyDoc.docs
+        .split('\n')
+        .map((line) => `  ${line}`)
+        .join('\n')
+
+      return `- \`${propertyDoc.name}\`\n${indentedDocs}`
+    })
+
+  if (properties.length === 0) return ''
+
+  return `**Properties**\n\n${properties.join('\n\n')}`
 }
 
 function renderCodeBlock(code: string) {
