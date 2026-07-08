@@ -41,7 +41,7 @@ Print rendered symbol sections in reverse order when a consumer benefits from bo
 exports-md path/to/module.ts --reverseSymbols
 ```
 
-Print same-module exports by category when a consumer benefits from functions before classes, constants, remaining non-types, and types:
+Print same-module exports by category when a consumer benefits from functions before classes, constants, remaining non-types, and types. Each category is rendered as an H2 group, and each symbol in a group is rendered as an H3:
 
 ```sh
 exports-md path/to/module.ts --sortExports

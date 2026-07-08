@@ -167,8 +167,10 @@ export namespace metadata {
   )
 
   const result = await generateMarkdownForModule(inputFile, { cwd: project, sortExports: true })
-  const headings = [...result.markdown.matchAll(/^## `([^`]+)`$/gm)].map((match) => match[1])
+  const groups = [...result.markdown.matchAll(/^## ([^\n]+)$/gm)].map((match) => match[1])
+  const headings = [...result.markdown.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1])
 
+  expect(groups).toEqual(['Functions', 'Classes', 'Constants', 'Other Exports', 'Types'])
   expect(headings).toEqual([
     'createClient',
     'Client',
@@ -235,8 +237,10 @@ export function buildClient() {
     sortExports: true,
     sortSymbols: true,
   })
-  const headings = [...result.markdown.matchAll(/^## `([^`]+)`$/gm)].map((match) => match[1])
+  const groups = [...result.markdown.matchAll(/^## ([^\n]+)$/gm)].map((match) => match[1])
+  const headings = [...result.markdown.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1])
 
+  expect(groups).toEqual(['Functions', 'Classes', 'Constants', 'Types'])
   expect(headings).toEqual([
     'buildClient',
     'makeClient',
@@ -283,8 +287,10 @@ export function buildClient() {
     sortExports: true,
     sortSymbols: true,
   })
-  const headings = [...result.markdown.matchAll(/^## `([^`]+)`$/gm)].map((match) => match[1])
+  const groups = [...result.markdown.matchAll(/^## ([^\n]+)$/gm)].map((match) => match[1])
+  const headings = [...result.markdown.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1])
 
+  expect(groups).toEqual(['Types', 'Constants', 'Classes', 'Functions'])
   expect(headings).toEqual([
     'BetaOptions',
     'API',

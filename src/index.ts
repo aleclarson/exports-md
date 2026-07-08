@@ -585,55 +585,122 @@ async function renderDeclarationBody(
     exportedName: getRenderedExportedName(entry, exportedNameOverrides),
   }))
 
-  const declarationSections: string[] = []
-
-  for (const entries of groupDeclarationEntries(ts, includedWithOverrides, {
-    sortExports: context?.sortExports,
-    sortSymbols: context?.sortSymbols,
-  })) {
-    const entry = entries[0]!
-    const { statement } = entry
-    const localName = getStatementName(ts, statement)
-    if (!localName) continue
-
-    const documentedEntry =
-      entries.find((entry) => getLeadingTsDoc(ts, declaration, entry.statement)) ?? entry
-    const comment = getLeadingTsDoc(ts, declaration, documentedEntry.statement)
-    const docs = comment ? renderTsDoc(parseTsDoc(comment)) : { body: '', tags: '' }
-    const propertyDocs =
-      context?.propertyDocs === 'list'
-        ? entries.flatMap((entry) => collectPropertyDocs(ts, declaration, entry.statement))
-        : []
-    const code = entries
-      .map((entry) => {
-        const propertyDocCommentEdits =
-          context?.propertyDocs === 'list'
-            ? collectPropertyDocCommentEdits(ts, declaration, entry.statement)
-            : []
-        return renderDeclarationCode(
-          ts,
-          entry,
-          exportedNameOverrides,
-          renderExportModifiers,
-          propertyDocCommentEdits,
-        )
-      })
-      .join('\n')
-
-    declarationSections.push(
-      renderDeclarationSection(entry.exportedName, docs, code, propertyDocs, context?.github),
-    )
-  }
-
-  const symbolSections = [
-    ...declarationSections,
+  const declarationSections = renderDeclarationSections(
+    ts,
+    declaration,
+    includedWithOverrides,
+    exportedNameOverrides,
+    renderExportModifiers,
+    context,
+  )
+  const followedSections = [
     ...followedImports.sections,
     ...followedImportedReExports.sections,
     ...followedReExports.sections,
   ]
+
+  if (context?.sortExports) {
+    sections.push(
+      ...(context.reverseSymbols
+        ? [...followedSections.toReversed(), ...declarationSections]
+        : [...declarationSections, ...followedSections]),
+    )
+    return sections
+  }
+
+  const symbolSections = [...declarationSections, ...followedSections]
   sections.push(...(context?.reverseSymbols ? symbolSections.toReversed() : symbolSections))
 
   return sections
+}
+
+function renderDeclarationSections(
+  ts: TypeScript,
+  declaration: string,
+  entries: DeclarationEntry[],
+  exportedNameOverrides: ReadonlyMap<string, string>,
+  renderExportModifiers: boolean,
+  context?: RenderContext,
+) {
+  const groups = groupDeclarationEntries(ts, entries, {
+    sortExports: context?.sortExports,
+    sortSymbols: context?.sortSymbols,
+  })
+  const renderedGroups = groups
+    .map((entries) => ({
+      entries,
+      section: renderSymbolDeclarationSection(
+        ts,
+        declaration,
+        entries,
+        exportedNameOverrides,
+        renderExportModifiers,
+        context,
+      ),
+    }))
+    .filter((group) => group.section)
+  const symbolSections = renderedGroups.map((group) => group.section)
+
+  if (!context?.sortExports) return symbolSections
+
+  const groupedSections = new Map<number, string[]>()
+  const orderedGroups = context.reverseSymbols ? renderedGroups.toReversed() : renderedGroups
+
+  for (const group of orderedGroups) {
+    const sortOrder = getDeclarationEntrySortOrder(ts, group.entries[0]!)
+    const sections = groupedSections.get(sortOrder)
+    if (sections) {
+      sections.push(group.section)
+    } else {
+      groupedSections.set(sortOrder, [group.section])
+    }
+  }
+
+  return [...groupedSections].map(([sortOrder, sections]) =>
+    [`## ${getDeclarationEntryGroupHeading(sortOrder)}`, ...sections].join('\n\n'),
+  )
+}
+
+function renderSymbolDeclarationSection(
+  ts: TypeScript,
+  declaration: string,
+  entries: DeclarationEntry[],
+  exportedNameOverrides: ReadonlyMap<string, string>,
+  renderExportModifiers: boolean,
+  context?: RenderContext,
+) {
+  const entry = entries[0]!
+  const { statement } = entry
+  const localName = getStatementName(ts, statement)
+  if (!localName) return ''
+
+  const documentedEntry =
+    entries.find((entry) => getLeadingTsDoc(ts, declaration, entry.statement)) ?? entry
+  const comment = getLeadingTsDoc(ts, declaration, documentedEntry.statement)
+  const docs = comment ? renderTsDoc(parseTsDoc(comment)) : { body: '', tags: '' }
+  const propertyDocs =
+    context?.propertyDocs === 'list'
+      ? entries.flatMap((entry) => collectPropertyDocs(ts, declaration, entry.statement))
+      : []
+  const code = entries
+    .map((entry) => {
+      const propertyDocCommentEdits =
+        context?.propertyDocs === 'list'
+          ? collectPropertyDocCommentEdits(ts, declaration, entry.statement)
+          : []
+      return renderDeclarationCode(
+        ts,
+        entry,
+        exportedNameOverrides,
+        renderExportModifiers,
+        propertyDocCommentEdits,
+      )
+    })
+    .join('\n')
+
+  return renderDeclarationSection(entry.exportedName, docs, code, propertyDocs, context?.github, {
+    headingLevel: context?.sortExports ? 3 : 2,
+  })
 }
 
 function getRenderedExportedName(
@@ -857,6 +924,15 @@ function getDeclarationEntrySortOrder(ts: TypeScript, entry: DeclarationEntry) {
   if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) return 4
 
   return 3
+}
+
+function getDeclarationEntryGroupHeading(sortOrder: number) {
+  if (sortOrder === 0) return 'Functions'
+  if (sortOrder === 1) return 'Classes'
+  if (sortOrder === 2) return 'Constants'
+  if (sortOrder === 4) return 'Types'
+
+  return 'Other Exports'
 }
 
 function isConstDeclaration(ts: TypeScript, statement: Statement) {
@@ -1766,9 +1842,12 @@ function renderDeclarationSection(
   code: string,
   propertyDocs: readonly PropertyDoc[] = [],
   github?: GitHubOptions,
+  options: { headingLevel?: 2 | 3 } = {},
 ) {
+  const headingMarker = '#'.repeat(options.headingLevel ?? 2)
+
   return [
-    `## \`${name}\``,
+    `${headingMarker} \`${name}\``,
     docs.body,
     renderCodeBlock(code),
     docs.tags,
