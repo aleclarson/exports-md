@@ -1193,8 +1193,15 @@ function resolveModuleTarget(
     options = {}
   }
 
-  return ts.resolveModuleName(moduleSpecifier, inputFile, options, ts.sys).resolvedModule
-    ?.resolvedFileName
+  const resolvedFileName = ts.resolveModuleName(moduleSpecifier, inputFile, options, ts.sys)
+    .resolvedModule?.resolvedFileName
+  if (!resolvedFileName || isNodeModulesPath(resolvedFileName)) return undefined
+
+  return resolvedFileName
+}
+
+function isNodeModulesPath(filePath: string) {
+  return filePath.split(/[\\/]/).includes('node_modules')
 }
 
 function getImportRequestedSourceNames(entry: ImportEntry, importedNames: ReadonlySet<string>) {

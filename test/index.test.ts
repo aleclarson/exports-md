@@ -1382,6 +1382,44 @@ export function createInput(input: Input): Input {
   ])
 })
 
+test('does not follow imports that resolve into node_modules', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    join(project, 'node_modules', 'external.d.ts'),
+    `
+/** External input docs. */
+export interface ExternalInput {
+  value: string
+}
+`,
+  )
+  await writeFile(
+    inputFile,
+    `
+import type { ExternalInput } from './node_modules/external'
+
+/** Creates an input value. */
+export function createInput(input: ExternalInput): ExternalInput {
+  return input
+}
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    followImports: true,
+    symbols: ['createInput'],
+  })
+
+  expect(result.markdown).toContain("import type { ExternalInput } from './node_modules/external';")
+  expect(result.markdown).toContain('## `createInput`')
+  expect(result.markdown).not.toContain('## `ExternalInput`')
+  expect(result.markdown).not.toContain('External input docs.')
+  expect(result.warnings).toEqual([])
+})
+
 test('warns about import-only declaration aliases when following imports', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.d.mts')
