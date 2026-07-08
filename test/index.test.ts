@@ -681,6 +681,53 @@ export { type JsonRecord, parseGeneric, parsePatch };
   expect(result.markdown).not.toContain('Hidden schema docs.')
 })
 
+test('mixes followed imported re-exports into grouped syntax sections', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'index.d.mts')
+
+  await writeFile(
+    join(project, 'schema.d.mts'),
+    `
+/** JSON record docs. */
+export interface A {
+  value: string
+}
+
+/** Parse patch docs. */
+export declare function C(input: A): A
+`,
+  )
+  await writeFile(
+    inputFile,
+    `
+import { A as JsonRecord, C as parsePatch } from "./schema.mjs";
+
+/** Local options docs. */
+export interface LocalOptions {
+  enabled: boolean
+}
+
+/** Local factory docs. */
+export declare function createLocal(options: LocalOptions): JsonRecord
+
+export { type JsonRecord, parsePatch };
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    followImports: true,
+    followReExports: true,
+    groupBySyntax: true,
+  })
+  const groups = [...result.markdown.matchAll(/^## ([^\n]+)$/gm)].map((match) => match[1])
+  const headings = [...result.markdown.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1])
+
+  expect(groups).toEqual(['Functions', 'Types'])
+  expect(headings).toEqual(['createLocal', 'parsePatch', 'LocalOptions', 'JsonRecord'])
+  expect(result.warnings).toEqual([])
+})
+
 test('uses public aliases for dependencies exported as minified chunk names', async () => {
   const project = await createProject()
   const inputFile = join(project, 'index.d.mts')
@@ -1289,12 +1336,12 @@ export function unused(): string {
   expect(result.markdown).not.toContain('unused')
 })
 
-test('follows relative imports to declarations when requested', async () => {
+test('omits import-only declaration symbols when following imports', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
 
   await writeFile(
-    join(project, 'types.ts'),
+    join(project, 'types.d.ts'),
     `
 /** External input docs. */
 export interface ExternalInput {
@@ -1327,14 +1374,15 @@ export function createInput(input: Input): Input {
 
   expect(result.markdown).not.toContain("import type { ExternalInput as Input } from './types';")
   expect(result.markdown).toContain('## `createInput`')
-  expect(result.markdown).toContain('## `Input`')
-  expect(result.markdown).toContain('External input docs.')
-  expect(result.markdown).toContain('interface Input')
-  expect(result.markdown).not.toContain('export interface Input')
+  expect(result.markdown).not.toContain('## `Input`')
+  expect(result.markdown).not.toContain('External input docs.')
   expect(result.markdown).not.toContain('UnusedExternal')
+  expect(result.warnings).toEqual([
+    'Imported symbol "Input" from "./types" is referenced by the public API of api.ts but is not exported; it was omitted from the rendered Markdown.',
+  ])
 })
 
-test('uses public aliases for dependencies of followed imports', async () => {
+test('warns about import-only declaration aliases when following imports', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.d.mts')
 
@@ -1368,13 +1416,15 @@ export declare function storeRecord(input: JsonRecord): JsonRecord
     symbols: ['storeRecord'],
   })
 
-  expect(result.markdown).toContain('## `JsonValue`')
+  expect(result.markdown).not.toContain('## `JsonValue`')
   expect(result.markdown).not.toContain('## `j`')
-  expect(result.markdown).toContain('## `JsonRecord`')
+  expect(result.markdown).not.toContain('## `JsonRecord`')
   expect(result.markdown).not.toContain('## `A`')
-  expect(result.markdown).toContain('type JsonRecord = Record<string, JsonValue>')
+  expect(result.markdown).not.toContain('type JsonRecord = Record<string, JsonValue>')
   expect(result.markdown).not.toContain('export type JsonRecord')
-  expect(result.markdown).not.toContain('Record<string, j>')
+  expect(result.warnings).toEqual([
+    'Imported symbol "JsonRecord" from "./schema-BCZugTrh.mjs" is referenced by the public API of api.d.mts but is not exported; it was omitted from the rendered Markdown.',
+  ])
 })
 
 test('follows relative imports by default for package inputs', async () => {
@@ -1416,9 +1466,12 @@ export declare function createPackageInput(input: PackageInput): PackageInput
 
   expect(result.markdown).not.toContain("import type { PackageInput } from './types';")
   expect(result.markdown).toContain('## `createPackageInput`')
-  expect(result.markdown).toContain('## `PackageInput`')
-  expect(result.markdown).toContain('Package input docs.')
+  expect(result.markdown).not.toContain('## `PackageInput`')
+  expect(result.markdown).not.toContain('Package input docs.')
   expect(result.markdown).not.toContain('export interface PackageInput')
+  expect(result.warnings).toEqual([
+    'Imported symbol "PackageInput" from "./types" is referenced by the public API of dist/index.d.ts but is not exported; it was omitted from the rendered Markdown.',
+  ])
 })
 
 test('fails clearly when a requested export is missing', async () => {

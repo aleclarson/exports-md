@@ -27,6 +27,7 @@ export interface GeneratedMarkdown {
   fromCache: boolean
   inputFile: string
   markdown: string
+  warnings: string[]
 }
 
 export interface GitHubOptions {
@@ -106,6 +107,7 @@ interface PackageMarkdownEntry {
   fromCache: boolean
   inputFile: string
   markdown: string
+  warnings: string[]
 }
 
 interface PackageEntryPoint {
@@ -239,6 +241,7 @@ async function generateMarkdownForInputs(
     fromCache: includedEntries.every((entry) => entry.fromCache),
     inputFile: includedEntries.map((entry) => entry.inputFile).join('\n'),
     markdown,
+    warnings: includedEntries.flatMap((entry) => entry.warnings),
   }
 }
 
@@ -324,6 +327,7 @@ async function generateMarkdownForPackage(
     fromCache: includedEntries.every((entry) => entry.fromCache),
     inputFile: packageJsonFile,
     markdown,
+    warnings: includedEntries.flatMap((entry) => entry.warnings),
   }
 }
 
@@ -364,6 +368,7 @@ async function generateMarkdownForDeclarationFile(
       fromCache: true,
       inputFile,
       markdown: cached.markdown,
+      warnings: [],
     }
   }
 
@@ -376,6 +381,7 @@ async function generateMarkdownForDeclarationFile(
       ? new Set<string>()
       : collectAvailableRequestedSymbols(ts, declaration, inputFile, symbols)
   const renderSymbols = allowMissingSymbols ? [...foundSymbols] : symbols
+  const warnings: string[] = []
   const markdown =
     allowMissingSymbols && symbols.length > 0 && foundSymbols.size === 0
       ? `# ${heading}\n`
@@ -390,6 +396,7 @@ async function generateMarkdownForDeclarationFile(
           groupBySyntax,
           sortByName,
           visited: new Set([resolve(inputFile)]),
+          warnings,
         })
 
   if (cacheFile) {
@@ -402,6 +409,7 @@ async function generateMarkdownForDeclarationFile(
     fromCache: false,
     inputFile,
     markdown,
+    warnings,
   }
 }
 
@@ -497,6 +505,7 @@ interface RenderContext {
   groupBySyntax: boolean
   sortByName: boolean
   visited: Set<string>
+  warnings: string[]
 }
 
 async function renderDeclarationMarkdown(
@@ -566,7 +575,13 @@ async function renderDeclarationBody(
     [...entry.importedNames].some((name) => importedNames.has(name)),
   )
   const followedImports = context?.followImports
-    ? await renderFollowedImportSections(ts, includedImports, importedNames, context)
+    ? await renderFollowedImportSections(
+        ts,
+        includedImports,
+        importedNames,
+        importedReExports,
+        context,
+      )
     : { followed: new Set<ImportEntry>(), sections: [] }
   const unresolvedImports = context?.followImports
     ? includedImports.filter((entry) => !followedImports.followed.has(entry))
@@ -600,11 +615,12 @@ async function renderDeclarationBody(
   ]
 
   if (context?.groupBySyntax) {
-    sections.push(
-      ...(context.reverseSymbols
+    const groupedSections = mergeGroupedDeclarationSections(
+      context.reverseSymbols
         ? [...followedSections.toReversed(), ...declarationSections]
-        : [...declarationSections, ...followedSections]),
+        : [...declarationSections, ...followedSections],
     )
+    sections.push(...groupedSections)
     return sections
   }
 
@@ -659,6 +675,34 @@ function renderDeclarationSections(
   return [...groupedSections].map(([sortOrder, sections]) =>
     [`## ${getDeclarationEntryGroupHeading(sortOrder)}`, ...sections].join('\n\n'),
   )
+}
+
+function mergeGroupedDeclarationSections(sections: string[]) {
+  const merged = new Map<string, string[]>()
+  const output: Array<{ heading?: string; section?: string }> = []
+
+  for (const section of sections) {
+    const match = /^## ([^\n]+)\n\n([\s\S]+)$/.exec(section)
+    if (!match) {
+      output.push({ section })
+      continue
+    }
+
+    const [, heading, body] = match
+    const bodies = merged.get(heading)
+    if (bodies) {
+      bodies.push(body)
+    } else {
+      merged.set(heading, [body])
+      output.push({ heading })
+    }
+  }
+
+  return output.map((entry) => {
+    if (entry.section) return entry.section
+
+    return [`## ${entry.heading}`, ...merged.get(entry.heading!)!].join('\n\n')
+  })
 }
 
 function renderSymbolDeclarationSection(
@@ -726,6 +770,7 @@ async function renderFollowedImportSections(
   ts: TypeScript,
   imports: ImportEntry[],
   importedNames: ReadonlySet<string>,
+  importedReExports: readonly ImportedReExportEntry[],
   context: RenderContext,
 ) {
   const followed = new Set<ImportEntry>()
@@ -743,26 +788,28 @@ async function renderFollowedImportSections(
     )
     if (!targetFile || context.visited.has(resolve(targetFile))) continue
 
-    const overrides = getImportedNameOverrides(entry)
-    const targetDeclaration = isDeclarationFile(targetFile)
-      ? await readFile(targetFile, 'utf8')
-      : compileDeclaration(ts, targetFile, context.cwd)
-    const targetContext = {
-      ...context,
-      inputFile: targetFile,
-      visited: new Set([...context.visited, resolve(targetFile)]),
+    const exportedSourceNames = new Set(
+      importedReExports
+        .filter((reExport) => reExport.importEntry === entry)
+        .map((reExport) => reExport.sourceName),
+    )
+    const omittedSourceNames = new Set(
+      requestedSourceNames.filter((sourceName) => !exportedSourceNames.has(sourceName)),
+    )
+
+    if (isDeclarationFile(targetFile)) {
+      for (const [localName, sourceName] of entry.importedNameAliases) {
+        if (!importedNames.has(localName) || !omittedSourceNames.has(sourceName)) continue
+
+        context.warnings.push(
+          `Imported symbol "${localName}" from "${entry.moduleSpecifier}" is referenced by the public API of ${relative(
+            context.cwd,
+            context.inputFile,
+          )} but is not exported; it was omitted from the rendered Markdown.`,
+        )
+      }
     }
 
-    sections.push(
-      ...(await renderDeclarationBody(
-        ts,
-        targetDeclaration,
-        requestedSourceNames,
-        targetContext,
-        overrides,
-        false,
-      )),
-    )
     followed.add(entry)
   }
 
@@ -1154,18 +1201,6 @@ function getImportRequestedSourceNames(entry: ImportEntry, importedNames: Readon
   return [...entry.importedNameAliases]
     .filter(([localName]) => importedNames.has(localName))
     .map(([, sourceName]) => sourceName)
-}
-
-function getImportedNameOverrides(entry: ImportEntry) {
-  const overrides = new Map<string, string>()
-
-  for (const [localName, sourceName] of entry.importedNameAliases) {
-    if (localName !== sourceName) {
-      overrides.set(sourceName, localName)
-    }
-  }
-
-  return overrides
 }
 
 function getReExportRequestedSourceNames(

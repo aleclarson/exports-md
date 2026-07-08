@@ -7,6 +7,7 @@ export interface GeneratedMarkdown {
   fromCache: boolean;
   inputFile: string;
   markdown: string;
+  warnings: string[];
 }
 export interface GenerateMarkdownOptions {
   cwd?: string;
