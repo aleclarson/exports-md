@@ -55,6 +55,11 @@ interface TsDoc {
   tags: TsDocTag[]
 }
 
+interface RenderedTsDoc {
+  body: string
+  tags: string
+}
+
 interface DeclarationEntry {
   code: string
   exportedName: string
@@ -564,7 +569,7 @@ async function renderDeclarationBody(
     const documentedEntry =
       entries.find((entry) => getLeadingTsDoc(ts, declaration, entry.statement)) ?? entry
     const comment = getLeadingTsDoc(ts, declaration, documentedEntry.statement)
-    const docs = comment ? renderTsDoc(parseTsDoc(comment)) : ''
+    const docs = comment ? renderTsDoc(parseTsDoc(comment)) : { body: '', tags: '' }
     const propertyDocs =
       context?.propertyDocs === 'list'
         ? entries.flatMap((entry) => collectPropertyDocs(ts, declaration, entry.statement))
@@ -863,7 +868,7 @@ function applyCodeEdits(code: string, edits: readonly CodeEdit[]) {
 
 function collectPropertyDocs(ts: TypeScript, declaration: string, statement: Statement) {
   return collectDocumentedPropertyMembers(ts, declaration, statement).map(({ comment, name }) => ({
-    docs: renderTsDoc(parseTsDoc(comment.raw)),
+    docs: renderTsDocMarkdown(parseTsDoc(comment.raw)),
     name,
   }))
 }
@@ -1617,7 +1622,7 @@ function normalizeTsDocLine(line: string) {
 }
 
 function renderTsDoc(doc: TsDoc) {
-  const blocks: string[] = []
+  const tagBlocks: string[] = []
   const params = doc.tags.filter((tag) => tag.name === 'param')
   const typeParams = doc.tags.filter((tag) => tag.name === 'typeParam' || tag.name === 'template')
   const returns = doc.tags.filter((tag) => tag.name === 'returns' || tag.name === 'return')
@@ -1626,34 +1631,38 @@ function renderTsDoc(doc: TsDoc) {
   const examples = doc.tags.filter((tag) => tag.name === 'example')
 
   if (deprecated) {
-    blocks.push(`**Deprecated.** ${deprecated.text}`.trimEnd())
-  }
-
-  if (doc.body) {
-    blocks.push(doc.body)
+    tagBlocks.push(`**Deprecated.** ${deprecated.text}`.trimEnd())
   }
 
   if (remarks?.text) {
-    blocks.push(`**Remarks**\n\n${remarks.text}`)
+    tagBlocks.push(`**Remarks**\n\n${remarks.text}`)
   }
 
   if (typeParams.length > 0) {
-    blocks.push(renderNamedTags('Type Parameters', typeParams))
+    tagBlocks.push(renderNamedTags('Type Parameters', typeParams))
   }
 
   if (params.length > 0) {
-    blocks.push(renderNamedTags('Parameters', params))
+    tagBlocks.push(renderNamedTags('Parameters', params))
   }
 
   if (returns.length > 0) {
-    blocks.push(`**Returns**\n\n${returns.map((tag) => tag.text).join('\n\n')}`)
+    tagBlocks.push(`**Returns**\n\n${returns.map((tag) => tag.text).join('\n\n')}`)
   }
 
   if (examples.length > 0) {
-    blocks.push(`**Examples**\n\n${examples.map((tag) => tag.text).join('\n\n')}`)
+    tagBlocks.push(`**Examples**\n\n${examples.map((tag) => tag.text).join('\n\n')}`)
   }
 
-  return blocks.join('\n\n')
+  return {
+    body: doc.body,
+    tags: tagBlocks.join('\n\n'),
+  }
+}
+
+function renderTsDocMarkdown(doc: TsDoc) {
+  const rendered = renderTsDoc(doc)
+  return [rendered.body, rendered.tags].filter(Boolean).join('\n\n')
 }
 
 function renderNamedTags(title: string, tags: TsDocTag[]) {
@@ -1670,15 +1679,16 @@ function renderNamedTags(title: string, tags: TsDocTag[]) {
 
 function renderDeclarationSection(
   name: string,
-  docs: string,
+  docs: RenderedTsDoc,
   code: string,
   propertyDocs: readonly PropertyDoc[] = [],
   github?: GitHubOptions,
 ) {
   return [
     `## \`${name}\``,
-    docs,
+    docs.body,
     renderCodeBlock(code),
+    docs.tags,
     renderPropertyDocs(propertyDocs),
     renderGitHubSearchLink(name, github),
   ]

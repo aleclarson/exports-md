@@ -55,6 +55,61 @@ const hidden = true
   expect(output).not.toContain('hidden')
 })
 
+test('renders declaration code between TSDoc summary and tag sections', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+/**
+ * Formats a user name.
+ *
+ * Preserves internal whitespace.
+ *
+ * @remarks Used in generated UI labels.
+ * @param name - Raw display name.
+ * @returns The formatted display name.
+ * @example
+ * formatName(' Ada ')
+ */
+export function formatName(name: string) {
+  return name.trim()
+}
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, { cwd: project })
+
+  expect(result.markdown).toContain(
+    [
+      'Formats a user name.',
+      '',
+      'Preserves internal whitespace.',
+      '',
+      '```ts',
+      'export function formatName(name: string): string;',
+      '```',
+      '',
+      '**Remarks**',
+      '',
+      'Used in generated UI labels.',
+      '',
+      '**Parameters**',
+      '',
+      '- `name`: Raw display name.',
+      '',
+      '**Returns**',
+      '',
+      'The formatted display name.',
+      '',
+      '**Examples**',
+      '',
+      "formatName(' Ada ')",
+    ].join('\n'),
+  )
+})
+
 test('reuses cached markdown for unchanged inputs', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
