@@ -1,9 +1,12 @@
+import { execFile as execFileCallback } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { findNearestTypescript, generateMarkdownForModule } from '../src/index'
 
+const execFile = promisify(execFileCallback)
 const tempDirs: string[] = []
 
 afterEach(async () => {
@@ -577,6 +580,96 @@ export declare function second(): string
   })
 
   expect(result.markdown.indexOf('## `second`')).toBeLessThan(result.markdown.indexOf('## `first`'))
+})
+
+test('filters package input symbols across export entries', async () => {
+  const project = await createProject()
+  const packageJson = join(project, 'package.json')
+
+  await mkdir(join(project, 'dist'), { recursive: true })
+  await writeFile(
+    join(project, 'dist', 'index.d.ts'),
+    `
+/** Main API. */
+export declare function createMain(): string
+`,
+  )
+  await writeFile(
+    join(project, 'dist', 'feature.d.ts'),
+    `
+/** Feature API. */
+export declare function createFeature(): string
+`,
+  )
+  await writeFile(
+    packageJson,
+    JSON.stringify(
+      {
+        name: 'foo',
+        exports: {
+          '.': './dist/index.js',
+          './feature': './dist/feature.js',
+        },
+      },
+      null,
+      2,
+    ),
+  )
+
+  const result = await generateMarkdownForModule(packageJson, {
+    cwd: project,
+    symbols: ['createFeature'],
+  })
+
+  expect(result.markdown).not.toContain('# foo\n')
+  expect(result.markdown).not.toContain('createMain')
+  expect(result.markdown).toMatch(/^# foo\/feature$/m)
+  expect(result.markdown).toContain('## `createFeature`')
+})
+
+test('prints selected symbols from multiple CLI inputs', async () => {
+  const project = await createProject()
+  const firstInput = join(project, 'first.ts')
+  const secondInput = join(project, 'second.ts')
+
+  await writeFile(
+    firstInput,
+    `
+/** First API. */
+export function first(): string {
+  return 'first'
+}
+`,
+  )
+  await writeFile(
+    secondInput,
+    `
+/** Second API. */
+export function second(): string {
+  return 'second'
+}
+`,
+  )
+
+  const { stdout } = await execFile(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      join(process.cwd(), 'src/index.ts'),
+      firstInput,
+      secondInput,
+      '--',
+      'first',
+      'second',
+    ],
+    { cwd: project },
+  )
+
+  expect(stdout).toMatch(/^# first.ts$/m)
+  expect(stdout).toContain('## `first`')
+  expect(stdout).toMatch(/^# second.ts$/m)
+  expect(stdout).toContain('## `second`')
+  expect(stdout.indexOf('# first.ts')).toBeLessThan(stdout.indexOf('# second.ts'))
 })
 
 test('writes package markdown entries to an output directory', async () => {

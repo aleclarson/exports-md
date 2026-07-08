@@ -1,16 +1,5 @@
 #!/usr/bin/env node
-import {
-  binary,
-  command,
-  flag,
-  option,
-  optional,
-  positional,
-  restPositionals,
-  run,
-  string,
-} from 'cmd-ts'
-import { File } from 'cmd-ts/batteries/fs'
+import { binary, command, flag, option, optional, run, string } from 'cmd-ts'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -88,6 +77,9 @@ interface CachedMarkdown {
 }
 
 interface PackageMarkdownEntry {
+  declaration: string
+  foundSymbols: Set<string>
+  fromCache: boolean
   inputFile: string
   markdown: string
 }
@@ -97,10 +89,33 @@ interface PackageEntryPoint {
   inputFile: string
 }
 
+interface CliNode {
+  raw: string
+  type: string
+}
+
+interface CliParseContext {
+  nodes: CliNode[]
+  visitedNodes: Set<CliNode>
+}
+
+interface CliInputsAndSymbols {
+  inputs: string[]
+  symbols: string[]
+}
+
 export async function generateMarkdownForModule(
   modulePath: string,
   options: GenerateMarkdownOptions = {},
 ): Promise<GeneratedMarkdown> {
+  return generateMarkdownForInput(modulePath, options)
+}
+
+async function generateMarkdownForInput(
+  modulePath: string,
+  options: GenerateMarkdownOptions = {},
+  allowMissingSymbols = false,
+): Promise<GeneratedMarkdown & { foundSymbols: Set<string> }> {
   const cwd = resolve(options.cwd ?? process.cwd())
   const inputFile = resolve(cwd, modulePath)
   const symbols = normalizeSymbols(options.symbols ?? [])
@@ -117,6 +132,7 @@ export async function generateMarkdownForModule(
       followReExports,
       reverseSymbols,
       options.outDir,
+      allowMissingSymbols,
     )
   }
 
@@ -131,7 +147,52 @@ export async function generateMarkdownForModule(
     followImports,
     followReExports,
     reverseSymbols,
+    undefined,
+    allowMissingSymbols,
   )
+}
+
+async function generateMarkdownForInputs(
+  modulePaths: readonly string[],
+  options: GenerateMarkdownOptions = {},
+): Promise<GeneratedMarkdown> {
+  if (modulePaths.length === 0) {
+    throw new Error('At least one input is required.')
+  }
+
+  if (modulePaths.length === 1) {
+    return generateMarkdownForModule(modulePaths[0]!, options)
+  }
+
+  if (options.outDir) {
+    throw new Error('--outDir is only supported for a single package.json input.')
+  }
+
+  const entries = await Promise.all(
+    modulePaths.map((modulePath) => generateMarkdownForInput(modulePath, options, true)),
+  )
+  const symbols = normalizeSymbols(options.symbols ?? [])
+  const foundSymbols = new Set(entries.flatMap((entry) => [...entry.foundSymbols]))
+
+  for (const symbol of symbols) {
+    if (!foundSymbols.has(symbol)) {
+      throw new Error(`Export not found: ${symbol}`)
+    }
+  }
+
+  const includedEntries =
+    symbols.length === 0 ? entries : entries.filter((entry) => entry.foundSymbols.size > 0)
+  const markdown = `${includedEntries
+    .map((entry) => entry.markdown.trimEnd())
+    .join('\n\n')
+    .trimEnd()}\n`
+
+  return {
+    declaration: includedEntries.map((entry) => entry.declaration).join('\n\n'),
+    fromCache: includedEntries.every((entry) => entry.fromCache),
+    inputFile: includedEntries.map((entry) => entry.inputFile).join('\n'),
+    markdown,
+  }
 }
 
 export function findNearestTypescript(startDir = process.cwd()) {
@@ -159,11 +220,8 @@ async function generateMarkdownForPackage(
   followReExports: boolean,
   reverseSymbols: boolean,
   outDir?: string,
-): Promise<GeneratedMarkdown> {
-  if (symbols.length > 0) {
-    throw new Error('Symbol filters are only supported for TypeScript module input.')
-  }
-
+  allowMissingSymbols = false,
+): Promise<GeneratedMarkdown & { foundSymbols: Set<string> }> {
   const packageJson = await readPackageJson(packageJsonFile)
   const packageName = getPackageName(packageJson, packageJsonFile)
   const entryPoints = readPackageEntryPoints(packageJsonFile, packageJson)
@@ -179,22 +237,36 @@ async function generateMarkdownForPackage(
           followReExports,
           reverseSymbols,
           heading,
+          symbols.length > 0 || allowMissingSymbols,
         )
       },
     ),
   )
-  const markdown = `${entries
+  const foundSymbols = new Set(entries.flatMap((entry) => [...entry.foundSymbols]))
+
+  if (!allowMissingSymbols) {
+    for (const symbol of symbols) {
+      if (!foundSymbols.has(symbol)) {
+        throw new Error(`Export not found: ${symbol}`)
+      }
+    }
+  }
+
+  const includedEntries =
+    symbols.length === 0 ? entries : entries.filter((entry) => entry.foundSymbols.size > 0)
+  const markdown = `${includedEntries
     .map((entry) => entry.markdown.trimEnd())
     .join('\n\n')
     .trimEnd()}\n`
 
   if (outDir) {
-    await writePackageMarkdownFiles(entries, resolve(cwd, outDir))
+    await writePackageMarkdownFiles(includedEntries, resolve(cwd, outDir))
   }
 
   return {
-    declaration: entries.map((entry) => entry.declaration).join('\n\n'),
-    fromCache: entries.every((entry) => entry.fromCache),
+    declaration: includedEntries.map((entry) => entry.declaration).join('\n\n'),
+    foundSymbols,
+    fromCache: includedEntries.every((entry) => entry.fromCache),
     inputFile: packageJsonFile,
     markdown,
   }
@@ -208,16 +280,18 @@ async function generateMarkdownForDeclarationFile(
   followReExports: boolean,
   reverseSymbols: boolean,
   heading = basename(inputFile),
-): Promise<GeneratedMarkdown> {
+  allowMissingSymbols = false,
+): Promise<GeneratedMarkdown & { foundSymbols: Set<string> }> {
   assertTypeScriptModule(inputFile)
   const cacheFile =
-    followImports || followReExports
+    allowMissingSymbols || followImports || followReExports
       ? undefined
       : await getCacheFile(inputFile, cwd, symbols, heading, reverseSymbols)
   const cached = cacheFile ? await readCache(cacheFile) : undefined
   if (cached) {
     return {
       declaration: cached.declaration,
+      foundSymbols: new Set(symbols),
       fromCache: true,
       inputFile,
       markdown: cached.markdown,
@@ -228,14 +302,22 @@ async function generateMarkdownForDeclarationFile(
   const declaration = isDeclarationFile(inputFile)
     ? await readFile(inputFile, 'utf8')
     : compileDeclaration(ts, inputFile, cwd)
-  const markdown = await declarationToMarkdown(ts, declaration, heading, symbols, {
-    cwd,
-    followImports,
-    followReExports,
-    inputFile,
-    reverseSymbols,
-    visited: new Set([resolve(inputFile)]),
-  })
+  const foundSymbols =
+    symbols.length === 0
+      ? new Set<string>()
+      : collectAvailableRequestedSymbols(ts, declaration, inputFile, symbols)
+  const renderSymbols = allowMissingSymbols ? [...foundSymbols] : symbols
+  const markdown =
+    allowMissingSymbols && symbols.length > 0 && foundSymbols.size === 0
+      ? `# ${heading}\n`
+      : await declarationToMarkdown(ts, declaration, heading, renderSymbols, {
+          cwd,
+          followImports,
+          followReExports,
+          inputFile,
+          reverseSymbols,
+          visited: new Set([resolve(inputFile)]),
+        })
 
   if (cacheFile) {
     await writeCache(cacheFile, { declaration, markdown })
@@ -243,6 +325,7 @@ async function generateMarkdownForDeclarationFile(
 
   return {
     declaration,
+    foundSymbols,
     fromCache: false,
     inputFile,
     markdown,
@@ -296,6 +379,38 @@ function declarationToMarkdown(
   context?: RenderContext,
 ) {
   return renderDeclarationMarkdown(ts, declaration, heading, requestedSymbols, context)
+}
+
+function collectAvailableRequestedSymbols(
+  ts: TypeScript,
+  declaration: string,
+  inputFile: string,
+  requestedSymbols: readonly string[],
+) {
+  const sourceFile = ts.createSourceFile(inputFile, declaration, ts.ScriptTarget.Latest, true)
+  const { declarations, importedReExports, reExports } = indexDeclarationFile(
+    ts,
+    declaration,
+    sourceFile,
+  )
+  const exportedDeclarations = declarations.filter((entry) => entry.isExported)
+  const byExportedName = new Set(exportedDeclarations.map((entry) => entry.exportedName))
+  const byLocalName = new Set(exportedDeclarations.map((entry) => entry.localName))
+  const externalExportNames = new Set([
+    ...reExports.flatMap((entry) => [...entry.exportedNames]),
+    ...importedReExports.map((entry) => entry.exportedName),
+  ])
+  const hasUnknownExternalExports = reExports.some((entry) => entry.exportsAll)
+
+  return new Set(
+    requestedSymbols.filter(
+      (symbol) =>
+        byExportedName.has(symbol) ||
+        byLocalName.has(symbol) ||
+        externalExportNames.has(symbol) ||
+        hasUnknownExternalExports,
+    ),
+  )
 }
 
 interface RenderContext {
@@ -406,7 +521,9 @@ async function renderDeclarationBody(
     const comment = getLeadingTsDoc(ts, declaration, documentedEntry.statement)
     const docs = comment ? renderTsDoc(parseTsDoc(comment)) : ''
     const code = entries
-      .map((entry) => renderDeclarationCode(ts, entry, exportedNameOverrides, renderExportModifiers))
+      .map((entry) =>
+        renderDeclarationCode(ts, entry, exportedNameOverrides, renderExportModifiers),
+      )
       .join('\n')
 
     declarationSections.push(renderDeclarationSection(entry.exportedName, docs, code))
@@ -1532,15 +1649,80 @@ function isDirectory(path: string) {
   }
 }
 
+function cliInputsAndSymbols() {
+  return {
+    helpTopics() {
+      return [
+        {
+          category: 'arguments',
+          defaults: [],
+          description: 'Inputs to document, followed by optional export symbols after --.',
+          usage: '[...input] -- [...symbol]',
+        },
+      ]
+    },
+    register() {},
+    async parse(context: CliParseContext) {
+      const values: string[] = []
+
+      for (const node of context.nodes) {
+        if (context.visitedNodes.has(node)) {
+          continue
+        }
+
+        if (node.type === 'forcePositional') {
+          values.push('--')
+          context.visitedNodes.add(node)
+          continue
+        }
+
+        if (node.type === 'positionalArgument') {
+          values.push(node.raw)
+          context.visitedNodes.add(node)
+        }
+      }
+
+      try {
+        return {
+          _tag: 'ok' as const,
+          value: splitCliInputsAndSymbols(values),
+        }
+      } catch (error) {
+        return {
+          _tag: 'error' as const,
+          error: {
+            errors: [
+              {
+                message: error instanceof Error ? error.message : String(error),
+                nodes: [],
+              },
+            ],
+          },
+        }
+      }
+    },
+  }
+}
+
+function splitCliInputsAndSymbols(values: readonly string[]): CliInputsAndSymbols {
+  const delimiterIndex = values.indexOf('--')
+  const inputs = delimiterIndex === -1 ? [...values] : values.slice(0, delimiterIndex)
+  const symbols = delimiterIndex === -1 ? [] : values.slice(delimiterIndex + 1)
+
+  if (inputs.length === 0) {
+    throw new Error('At least one input is required.')
+  }
+
+  return {
+    inputs,
+    symbols,
+  }
+}
+
 const app = command({
   name: 'exports-md',
-  description: 'Print Markdown docs for TypeScript module exports.',
+  description: 'Print Markdown docs for TypeScript module or package exports.',
   args: {
-    module: positional({
-      type: File,
-      displayName: 'input',
-      description: 'TypeScript module or package.json to document.',
-    }),
     outDir: option({
       type: optional(string),
       long: 'outDir',
@@ -1568,19 +1750,15 @@ const app = command({
       short: 'r',
       description: 'Print rendered symbol sections in reverse order.',
     }),
-    symbols: restPositionals({
-      type: string,
-      displayName: 'symbol',
-      description: 'Export symbol names to include.',
-    }),
+    query: cliInputsAndSymbols(),
   },
-  async handler({ module, follow, followImports, followReExports, outDir, reverseSymbols, symbols }) {
-    const result = await generateMarkdownForModule(module, {
+  async handler({ follow, followImports, followReExports, outDir, query, reverseSymbols }) {
+    const result = await generateMarkdownForInputs(query.inputs, {
       followImports: follow || followImports || undefined,
       followReExports: follow || followReExports || undefined,
       outDir,
       reverseSymbols,
-      symbols,
+      symbols: query.symbols,
     })
     if (!outDir) {
       process.stdout.write(result.markdown)

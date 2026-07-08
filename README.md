@@ -29,7 +29,13 @@ exports-md src/index.ts
 Query one or more exported symbols:
 
 ```sh
-exports-md src/index.ts generateMarkdownForModule findNearestTypescript
+exports-md src/index.ts -- generateMarkdownForModule findNearestTypescript
+```
+
+Print documentation for multiple inputs:
+
+```sh
+exports-md src/index.ts src/feature.ts
 ```
 
 Print symbol sections in reverse order:
@@ -41,7 +47,7 @@ exports-md src/index.ts -r
 Write the Markdown to a file with normal shell redirection:
 
 ```sh
-exports-md src/index.ts generateMarkdownForModule > src/index.md
+exports-md src/index.ts -- generateMarkdownForModule > src/index.md
 ```
 
 Print documentation for every declaration entry point in a package export map:
