@@ -547,7 +547,7 @@ export interface FeatureOptions {
   expect(result.markdown).toContain('## `FeatureOptions`')
 })
 
-test('renders package property docs below declaration code blocks', async () => {
+test('keeps package property docs inline by default', async () => {
   const project = await createProject()
   const packageJson = join(project, 'package.json')
 
@@ -584,6 +584,40 @@ export interface FeatureOptions {
 
   const result = await generateMarkdownForModule(packageJson, { cwd: project })
 
+  expect(result.markdown).toContain(
+    '```ts\nexport interface FeatureOptions {\n  /** Enables the feature. */\n  enabled: boolean',
+  )
+  expect(result.markdown).not.toContain('**Properties**')
+})
+
+test('renders property docs below declaration code blocks when requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.d.ts')
+
+  await writeFile(
+    inputFile,
+    `
+/** Feature options. */
+export interface FeatureOptions {
+  /** Enables the feature. */
+  enabled: boolean
+  nested: {
+    /**
+     * Nested value docs.
+     *
+     * @remarks Keep this visible outside the code block.
+     */
+    value: string
+  }
+}
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    propertyDocs: 'list',
+  })
+
   expect(result.markdown).toContain('```ts\nexport interface FeatureOptions {\n  enabled: boolean')
   expect(result.markdown).not.toContain('/** Enables the feature. */')
   expect(result.markdown).not.toContain('Nested value docs.\n     *')
@@ -601,6 +635,40 @@ export interface FeatureOptions {
       '  ',
       '  Keep this visible outside the code block.',
     ].join('\n'),
+  )
+})
+
+test('renders property docs as a list from the CLI when requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.d.ts')
+
+  await writeFile(
+    inputFile,
+    `
+/** Feature options. */
+export interface FeatureOptions {
+  /** Enables the feature. */
+  enabled: boolean
+}
+`,
+  )
+
+  const { stdout } = await execFile(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      join(process.cwd(), 'src/index.ts'),
+      inputFile,
+      '--property-docs',
+      'list',
+    ],
+    { cwd: project },
+  )
+
+  expect(stdout).toContain('```ts\nexport interface FeatureOptions {\n  enabled: boolean')
+  expect(stdout).not.toContain('/** Enables the feature. */')
+  expect(stdout).toContain(
+    ['**Properties**', '', '- `enabled`', '  Enables the feature.'].join('\n'),
   )
 })
 

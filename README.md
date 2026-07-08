@@ -44,6 +44,12 @@ Print symbol sections in reverse order:
 exports-md src/index.ts -r
 ```
 
+Render property TSDoc comments below declaration code blocks as a `**Properties**` list:
+
+```sh
+exports-md src/index.ts --property-docs list
+```
+
 Write the Markdown to a file with normal shell redirection:
 
 ```sh
@@ -74,7 +80,7 @@ exports-md package.json -o docs/api
 
 `exports-md` resolves the nearest `node_modules/typescript` from the current working directory, so declaration emit uses the TypeScript version installed by the target project.
 
-The tool emits declarations in memory, parses the resulting `.d.ts`, and renders Markdown sections from exported declarations and their leading TSDoc comments. When a symbol query is provided, the output includes requested exports plus local declaration dependencies needed to understand their signatures. With `--reverseSymbols`, rendered symbol sections are printed in reverse order while heading and reference import/re-export blocks stay in place.
+The tool emits declarations in memory, parses the resulting `.d.ts`, and renders Markdown sections from exported declarations and their leading TSDoc comments. Property TSDoc comments stay inside declaration code blocks by default. With `--property-docs list`, property comments are removed from interface and object type code blocks and rendered below the block as a `**Properties**` list. When a symbol query is provided, the output includes requested exports plus local declaration dependencies needed to understand their signatures. With `--reverseSymbols`, rendered symbol sections are printed in reverse order while heading and reference import/re-export blocks stay in place.
 
 When the input is `package.json`, the tool reads the `exports` field and renders each declaration entry point with a separate H1 based on the package name and export subpath, such as `foo` for `.` and `foo/bar` for `./bar`. Export-map entries with `types` targets use those targets. Entries without `types` targets use string `.js` or `.mjs` targets rewritten to `.d.ts`. With `--outDir`, each entry point is written as a `.md` file under the output directory, preserving the entry point folder structure relative to their shared common root.
 

@@ -13,9 +13,14 @@ export interface GenerateMarkdownOptions {
   followImports?: boolean;
   followReExports?: boolean;
   outDir?: string;
+  propertyDocs?: PropertyDocMode;
   reverseSymbols?: boolean;
   symbols?: string[];
 }
+// #endregion
+
+// #region Types
+export type PropertyDocMode = 'inline' | 'list';
 // #endregion
 
 // #region Functions

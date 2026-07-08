@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { binary, command, flag, option, optional, run, string } from 'cmd-ts'
+import { binary, command, flag, oneOf, option, optional, run, string } from 'cmd-ts'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -18,6 +18,9 @@ import type {
 type TypeScript = typeof import('typescript')
 const cacheVersion = 6
 const packageVersion = '0.0.0'
+export type PropertyDocMode = 'inline' | 'list'
+
+const propertyDocModes = ['inline', 'list'] as const satisfies readonly PropertyDocMode[]
 
 export interface GeneratedMarkdown {
   declaration: string
@@ -31,6 +34,7 @@ export interface GenerateMarkdownOptions {
   followImports?: boolean
   followReExports?: boolean
   outDir?: string
+  propertyDocs?: PropertyDocMode
   reverseSymbols?: boolean
   symbols?: string[]
 }
@@ -139,6 +143,7 @@ async function generateMarkdownForInput(
   const symbols = normalizeSymbols(options.symbols ?? [])
   const followImports = options.followImports ?? isPackageJson(inputFile)
   const followReExports = options.followReExports ?? isPackageJson(inputFile)
+  const propertyDocs = options.propertyDocs ?? 'inline'
   const reverseSymbols = options.reverseSymbols ?? false
 
   if (isPackageJson(inputFile)) {
@@ -148,6 +153,7 @@ async function generateMarkdownForInput(
       symbols,
       followImports,
       followReExports,
+      propertyDocs,
       reverseSymbols,
       options.outDir,
       allowMissingSymbols,
@@ -164,6 +170,7 @@ async function generateMarkdownForInput(
     symbols,
     followImports,
     followReExports,
+    propertyDocs,
     reverseSymbols,
     undefined,
     allowMissingSymbols,
@@ -236,6 +243,7 @@ async function generateMarkdownForPackage(
   symbols: readonly string[],
   followImports: boolean,
   followReExports: boolean,
+  propertyDocs: PropertyDocMode,
   reverseSymbols: boolean,
   outDir?: string,
   allowMissingSymbols = false,
@@ -253,10 +261,10 @@ async function generateMarkdownForPackage(
           symbols,
           followImports,
           followReExports,
+          propertyDocs,
           reverseSymbols,
           heading,
           symbols.length > 0 || allowMissingSymbols,
-          true,
         )
       },
     ),
@@ -297,14 +305,15 @@ async function generateMarkdownForDeclarationFile(
   symbols: readonly string[],
   followImports: boolean,
   followReExports: boolean,
+  propertyDocs: PropertyDocMode,
   reverseSymbols: boolean,
   heading = basename(inputFile),
   allowMissingSymbols = false,
-  renderPropertyDocs = false,
 ): Promise<GeneratedMarkdown & { foundSymbols: Set<string> }> {
   assertTypeScriptModule(inputFile)
+  const listPropertyDocs = propertyDocs === 'list'
   const cacheFile =
-    renderPropertyDocs || allowMissingSymbols || followImports || followReExports
+    listPropertyDocs || allowMissingSymbols || followImports || followReExports
       ? undefined
       : await getCacheFile(inputFile, cwd, symbols, heading, reverseSymbols)
   const cached = cacheFile ? await readCache(cacheFile) : undefined
@@ -335,7 +344,7 @@ async function generateMarkdownForDeclarationFile(
           followImports,
           followReExports,
           inputFile,
-          renderPropertyDocs,
+          propertyDocs,
           reverseSymbols,
           visited: new Set([resolve(inputFile)]),
         })
@@ -439,7 +448,7 @@ interface RenderContext {
   followImports: boolean
   followReExports: boolean
   inputFile: string
-  renderPropertyDocs: boolean
+  propertyDocs: PropertyDocMode
   reverseSymbols: boolean
   visited: Set<string>
 }
@@ -542,14 +551,16 @@ async function renderDeclarationBody(
       entries.find((entry) => getLeadingTsDoc(ts, declaration, entry.statement)) ?? entry
     const comment = getLeadingTsDoc(ts, declaration, documentedEntry.statement)
     const docs = comment ? renderTsDoc(parseTsDoc(comment)) : ''
-    const propertyDocs = context?.renderPropertyDocs
-      ? entries.flatMap((entry) => collectPropertyDocs(ts, declaration, entry.statement))
-      : []
+    const propertyDocs =
+      context?.propertyDocs === 'list'
+        ? entries.flatMap((entry) => collectPropertyDocs(ts, declaration, entry.statement))
+        : []
     const code = entries
       .map((entry) => {
-        const propertyDocCommentEdits = context?.renderPropertyDocs
-          ? collectPropertyDocCommentEdits(ts, declaration, entry.statement)
-          : []
+        const propertyDocCommentEdits =
+          context?.propertyDocs === 'list'
+            ? collectPropertyDocCommentEdits(ts, declaration, entry.statement)
+            : []
         return renderDeclarationCode(
           ts,
           entry,
@@ -1885,13 +1896,27 @@ const app = command({
       short: 'r',
       description: 'Print rendered symbol sections in reverse order.',
     }),
+    propertyDocs: option({
+      type: optional(oneOf(propertyDocModes)),
+      long: 'property-docs',
+      description: 'Render property TSDoc comments inline or as a list below declaration code.',
+    }),
     query: cliInputsAndSymbols(),
   },
-  async handler({ follow, followImports, followReExports, outDir, query, reverseSymbols }) {
+  async handler({
+    follow,
+    followImports,
+    followReExports,
+    outDir,
+    propertyDocs,
+    query,
+    reverseSymbols,
+  }) {
     const result = await generateMarkdownForInputs(query.inputs, {
       followImports: follow || followImports || undefined,
       followReExports: follow || followReExports || undefined,
       outDir,
+      propertyDocs,
       reverseSymbols,
       symbols: query.symbols,
     })
