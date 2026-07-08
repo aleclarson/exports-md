@@ -16,6 +16,7 @@ export interface GenerateMarkdownOptions {
   outDir?: string;
   propertyDocs?: PropertyDocMode;
   reverseSymbols?: boolean;
+  sortExports?: boolean;
   symbols?: string[];
 }
 export interface GitHubOptions {

@@ -41,6 +41,12 @@ Print rendered symbol sections in reverse order when a consumer benefits from bo
 exports-md path/to/module.ts --reverseSymbols
 ```
 
+Print same-module exports by category when a consumer benefits from functions before classes, constants, remaining non-types, and types:
+
+```sh
+exports-md path/to/module.ts --sortExports
+```
+
 Render every declaration entry point from a package export map:
 
 ```sh

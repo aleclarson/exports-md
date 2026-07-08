@@ -110,6 +110,76 @@ export function formatName(name: string) {
   )
 })
 
+test('preserves same-module export order by default', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+export interface User {
+  name: string
+}
+
+export function createUser(): User {
+  return { name: 'Ada' }
+}
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, { cwd: project })
+  const headings = [...result.markdown.matchAll(/^## `([^`]+)`$/gm)].map((match) => match[1])
+
+  expect(headings).toEqual(['User', 'createUser'])
+})
+
+test('orders same-module exports by declaration category when requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+export interface User {
+  name: string
+}
+
+export const version = '1.0.0'
+
+export class Client {}
+
+export enum Status {
+  Ready = 'ready',
+}
+
+export function createClient() {
+  return new Client()
+}
+
+export type ClientOptions = {
+  retry: boolean
+}
+
+export namespace metadata {
+  export const stable = true
+}
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, { cwd: project, sortExports: true })
+  const headings = [...result.markdown.matchAll(/^## `([^`]+)`$/gm)].map((match) => match[1])
+
+  expect(headings).toEqual([
+    'createClient',
+    'Client',
+    'version',
+    'Status',
+    'metadata',
+    'User',
+    'ClientOptions',
+  ])
+})
+
 test('reuses cached markdown for unchanged inputs', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
@@ -765,6 +835,32 @@ export interface FeatureOptions {
   expect(stdout).toContain(
     ['**Properties**', '', '- `enabled`', '  Enables the feature.'].join('\n'),
   )
+})
+
+test('sorts same-module exports from the CLI when requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+export type Config = {
+  name: string
+}
+
+export function createConfig(): Config {
+  return { name: 'default' }
+}
+`,
+  )
+
+  const { stdout } = await execFile(
+    process.execPath,
+    ['--experimental-strip-types', join(process.cwd(), 'src/index.ts'), inputFile, '--sortExports'],
+    { cwd: project },
+  )
+
+  expect(stdout.indexOf('## `createConfig`')).toBeLessThan(stdout.indexOf('## `Config`'))
 })
 
 test('prints package entry symbols in reverse order when requested', async () => {
