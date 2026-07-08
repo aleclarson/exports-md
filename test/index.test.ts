@@ -166,7 +166,7 @@ export namespace metadata {
 `,
   )
 
-  const result = await generateMarkdownForModule(inputFile, { cwd: project, sortExports: true })
+  const result = await generateMarkdownForModule(inputFile, { cwd: project, groupBySyntax: true })
   const groups = [...result.markdown.matchAll(/^## ([^\n]+)$/gm)].map((match) => match[1])
   const headings = [...result.markdown.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1])
 
@@ -197,7 +197,7 @@ export const carrot = true
 `,
   )
 
-  const result = await generateMarkdownForModule(inputFile, { cwd: project, sortSymbols: true })
+  const result = await generateMarkdownForModule(inputFile, { cwd: project, sortByName: true })
   const headings = [...result.markdown.matchAll(/^## `([^`]+)`$/gm)].map((match) => match[1])
 
   expect(headings).toEqual(['apple', 'carrot', 'Banana', '_API', '$URL'])
@@ -234,8 +234,8 @@ export function buildClient() {
 
   const result = await generateMarkdownForModule(inputFile, {
     cwd: project,
-    sortExports: true,
-    sortSymbols: true,
+    groupBySyntax: true,
+    sortByName: true,
   })
   const groups = [...result.markdown.matchAll(/^## ([^\n]+)$/gm)].map((match) => match[1])
   const headings = [...result.markdown.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1])
@@ -284,8 +284,8 @@ export function buildClient() {
   const result = await generateMarkdownForModule(inputFile, {
     cwd: project,
     reverseSymbols: true,
-    sortExports: true,
-    sortSymbols: true,
+    groupBySyntax: true,
+    sortByName: true,
   })
   const groups = [...result.markdown.matchAll(/^## ([^\n]+)$/gm)].map((match) => match[1])
   const headings = [...result.markdown.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1])
@@ -959,7 +959,7 @@ export interface FeatureOptions {
   )
 })
 
-test('sorts same-module exports from the CLI when requested', async () => {
+test('groups same-module exports from the CLI when requested', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
 
@@ -978,11 +978,16 @@ export function createConfig(): Config {
 
   const { stdout } = await execFile(
     process.execPath,
-    ['--experimental-strip-types', join(process.cwd(), 'src/index.ts'), inputFile, '--sortExports'],
+    [
+      '--experimental-strip-types',
+      join(process.cwd(), 'src/index.ts'),
+      inputFile,
+      '--groupBySyntax',
+    ],
     { cwd: project },
   )
 
-  expect(stdout.indexOf('## `createConfig`')).toBeLessThan(stdout.indexOf('## `Config`'))
+  expect(stdout.indexOf('### `createConfig`')).toBeLessThan(stdout.indexOf('### `Config`'))
 })
 
 test('sorts same-module symbols alphabetically from the CLI when requested', async () => {
@@ -999,7 +1004,7 @@ export const apple = true
 
   const { stdout } = await execFile(
     process.execPath,
-    ['--experimental-strip-types', join(process.cwd(), 'src/index.ts'), inputFile, '--sortSymbols'],
+    ['--experimental-strip-types', join(process.cwd(), 'src/index.ts'), inputFile, '--sortByName'],
     { cwd: project },
   )
 

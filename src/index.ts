@@ -42,8 +42,8 @@ export interface GenerateMarkdownOptions {
   outDir?: string
   propertyDocs?: PropertyDocMode
   reverseSymbols?: boolean
-  sortExports?: boolean
-  sortSymbols?: boolean
+  groupBySyntax?: boolean
+  sortByName?: boolean
   symbols?: string[]
 }
 
@@ -159,8 +159,8 @@ async function generateMarkdownForInput(
   const github = normalizeGitHubOptions(options.github)
   const propertyDocs = options.propertyDocs ?? 'inline'
   const reverseSymbols = options.reverseSymbols ?? false
-  const sortExports = options.sortExports ?? false
-  const sortSymbols = options.sortSymbols ?? false
+  const groupBySyntax = options.groupBySyntax ?? false
+  const sortByName = options.sortByName ?? false
 
   if (isPackageJson(inputFile)) {
     return generateMarkdownForPackage(
@@ -172,8 +172,8 @@ async function generateMarkdownForInput(
       github,
       propertyDocs,
       reverseSymbols,
-      sortExports,
-      sortSymbols,
+      groupBySyntax,
+      sortByName,
       options.outDir,
       allowMissingSymbols,
     )
@@ -192,8 +192,8 @@ async function generateMarkdownForInput(
     github,
     propertyDocs,
     reverseSymbols,
-    sortExports,
-    sortSymbols,
+    groupBySyntax,
+    sortByName,
     undefined,
     allowMissingSymbols,
   )
@@ -268,8 +268,8 @@ async function generateMarkdownForPackage(
   github: GitHubOptions | undefined,
   propertyDocs: PropertyDocMode,
   reverseSymbols: boolean,
-  sortExports: boolean,
-  sortSymbols: boolean,
+  groupBySyntax: boolean,
+  sortByName: boolean,
   outDir?: string,
   allowMissingSymbols = false,
 ): Promise<GeneratedMarkdown & { foundSymbols: Set<string> }> {
@@ -289,8 +289,8 @@ async function generateMarkdownForPackage(
           github,
           propertyDocs,
           reverseSymbols,
-          sortExports,
-          sortSymbols,
+          groupBySyntax,
+          sortByName,
           heading,
           symbols.length > 0 || allowMissingSymbols,
         )
@@ -336,8 +336,8 @@ async function generateMarkdownForDeclarationFile(
   github: GitHubOptions | undefined,
   propertyDocs: PropertyDocMode,
   reverseSymbols: boolean,
-  sortExports: boolean,
-  sortSymbols: boolean,
+  groupBySyntax: boolean,
+  sortByName: boolean,
   heading = basename(inputFile),
   allowMissingSymbols = false,
 ): Promise<GeneratedMarkdown & { foundSymbols: Set<string> }> {
@@ -353,8 +353,8 @@ async function generateMarkdownForDeclarationFile(
           heading,
           github,
           reverseSymbols,
-          sortExports,
-          sortSymbols,
+          groupBySyntax,
+          sortByName,
         )
   const cached = cacheFile ? await readCache(cacheFile) : undefined
   if (cached) {
@@ -387,8 +387,8 @@ async function generateMarkdownForDeclarationFile(
           inputFile,
           propertyDocs,
           reverseSymbols,
-          sortExports,
-          sortSymbols,
+          groupBySyntax,
+          sortByName,
           visited: new Set([resolve(inputFile)]),
         })
 
@@ -494,8 +494,8 @@ interface RenderContext {
   inputFile: string
   propertyDocs: PropertyDocMode
   reverseSymbols: boolean
-  sortExports: boolean
-  sortSymbols: boolean
+  groupBySyntax: boolean
+  sortByName: boolean
   visited: Set<string>
 }
 
@@ -599,7 +599,7 @@ async function renderDeclarationBody(
     ...followedReExports.sections,
   ]
 
-  if (context?.sortExports) {
+  if (context?.groupBySyntax) {
     sections.push(
       ...(context.reverseSymbols
         ? [...followedSections.toReversed(), ...declarationSections]
@@ -623,8 +623,8 @@ function renderDeclarationSections(
   context?: RenderContext,
 ) {
   const groups = groupDeclarationEntries(ts, entries, {
-    sortExports: context?.sortExports,
-    sortSymbols: context?.sortSymbols,
+    groupBySyntax: context?.groupBySyntax,
+    sortByName: context?.sortByName,
   })
   const renderedGroups = groups
     .map((entries) => ({
@@ -641,7 +641,7 @@ function renderDeclarationSections(
     .filter((group) => group.section)
   const symbolSections = renderedGroups.map((group) => group.section)
 
-  if (!context?.sortExports) return symbolSections
+  if (!context?.groupBySyntax) return symbolSections
 
   const groupedSections = new Map<number, string[]>()
   const orderedGroups = context.reverseSymbols ? renderedGroups.toReversed() : renderedGroups
@@ -699,7 +699,7 @@ function renderSymbolDeclarationSection(
     .join('\n')
 
   return renderDeclarationSection(entry.exportedName, docs, code, propertyDocs, context?.github, {
-    headingLevel: context?.sortExports ? 3 : 2,
+    headingLevel: context?.groupBySyntax ? 3 : 2,
   })
 }
 
@@ -887,7 +887,7 @@ async function renderFollowedReExportSections(
 function groupDeclarationEntries(
   ts: TypeScript,
   entries: DeclarationEntry[],
-  options: { sortExports?: boolean; sortSymbols?: boolean } = {},
+  options: { groupBySyntax?: boolean; sortByName?: boolean } = {},
 ) {
   const groups = new Map<string, DeclarationEntry[]>()
 
@@ -901,14 +901,14 @@ function groupDeclarationEntries(
   }
 
   const grouped = [...groups.values()]
-  if (!options.sortExports && !options.sortSymbols) return grouped
+  if (!options.groupBySyntax && !options.sortByName) return grouped
 
   return grouped.sort(
     (left, right) =>
-      (options.sortExports
+      (options.groupBySyntax
         ? getDeclarationEntrySortOrder(ts, left[0]!) - getDeclarationEntrySortOrder(ts, right[0]!)
         : 0) ||
-      (options.sortSymbols
+      (options.sortByName
         ? compareSymbolNames(left[0]!.exportedName, right[0]!.exportedName)
         : 0) ||
       left[0]!.index - right[0]!.index,
@@ -1895,8 +1895,8 @@ async function getCacheFile(
   heading: string,
   github: GitHubOptions | undefined,
   reverseSymbols: boolean,
-  sortExports: boolean,
-  sortSymbols: boolean,
+  groupBySyntax: boolean,
+  sortByName: boolean,
 ) {
   const source = await readFile(inputFile, 'utf8')
   const configPath = findTsConfig(inputFile)
@@ -1918,7 +1918,7 @@ async function getCacheFile(
     .update('\0')
     .update(heading)
     .update('\0')
-    .update(JSON.stringify({ github, reverseSymbols, sortExports, sortSymbols }))
+    .update(JSON.stringify({ github, reverseSymbols, groupBySyntax, sortByName }))
     .digest('hex')
 
   return join(tmpdir(), 'exports-md', `${hash}.json`)
@@ -2118,15 +2118,15 @@ const app = command({
       short: 'r',
       description: 'Print rendered symbol sections in reverse order.',
     }),
-    sortExports: flag({
-      long: 'sortExports',
+    groupBySyntax: flag({
+      long: 'groupBySyntax',
       description:
-        'Print same-module exports by category: functions, classes, constants, other non-types, then types.',
+        'Group same-module exports by syntax category: functions, classes, constants, other non-types, then types.',
     }),
-    sortSymbols: flag({
-      long: 'sortSymbols',
+    sortByName: flag({
+      long: 'sortByName',
       description:
-        'Print same-module exports alphabetically, with lowercase symbols first and all-caps symbols last.',
+        'Sort same-module exports by name, with lowercase symbols first and all-caps symbols last.',
     }),
     propertyDocs: option({
       type: optional(oneOf(propertyDocModes)),
@@ -2145,8 +2145,8 @@ const app = command({
     propertyDocs,
     query,
     reverseSymbols,
-    sortExports,
-    sortSymbols,
+    groupBySyntax,
+    sortByName,
   }) {
     const result = await generateMarkdownForInputs(query.inputs, {
       followImports: follow || followImports || undefined,
@@ -2158,8 +2158,8 @@ const app = command({
       outDir,
       propertyDocs,
       reverseSymbols,
-      sortExports,
-      sortSymbols,
+      groupBySyntax,
+      sortByName,
       symbols: query.symbols,
     })
     if (!outDir) {
