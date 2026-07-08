@@ -29,10 +29,16 @@ export interface GeneratedMarkdown {
   markdown: string
 }
 
+export interface GitHubOptions {
+  repository?: string
+  searchLinks?: boolean
+}
+
 export interface GenerateMarkdownOptions {
   cwd?: string
   followImports?: boolean
   followReExports?: boolean
+  github?: GitHubOptions
   outDir?: string
   propertyDocs?: PropertyDocMode
   reverseSymbols?: boolean
@@ -143,6 +149,7 @@ async function generateMarkdownForInput(
   const symbols = normalizeSymbols(options.symbols ?? [])
   const followImports = options.followImports ?? isPackageJson(inputFile)
   const followReExports = options.followReExports ?? isPackageJson(inputFile)
+  const github = normalizeGitHubOptions(options.github)
   const propertyDocs = options.propertyDocs ?? 'inline'
   const reverseSymbols = options.reverseSymbols ?? false
 
@@ -153,6 +160,7 @@ async function generateMarkdownForInput(
       symbols,
       followImports,
       followReExports,
+      github,
       propertyDocs,
       reverseSymbols,
       options.outDir,
@@ -170,6 +178,7 @@ async function generateMarkdownForInput(
     symbols,
     followImports,
     followReExports,
+    github,
     propertyDocs,
     reverseSymbols,
     undefined,
@@ -243,6 +252,7 @@ async function generateMarkdownForPackage(
   symbols: readonly string[],
   followImports: boolean,
   followReExports: boolean,
+  github: GitHubOptions | undefined,
   propertyDocs: PropertyDocMode,
   reverseSymbols: boolean,
   outDir?: string,
@@ -261,6 +271,7 @@ async function generateMarkdownForPackage(
           symbols,
           followImports,
           followReExports,
+          github,
           propertyDocs,
           reverseSymbols,
           heading,
@@ -305,6 +316,7 @@ async function generateMarkdownForDeclarationFile(
   symbols: readonly string[],
   followImports: boolean,
   followReExports: boolean,
+  github: GitHubOptions | undefined,
   propertyDocs: PropertyDocMode,
   reverseSymbols: boolean,
   heading = basename(inputFile),
@@ -315,7 +327,7 @@ async function generateMarkdownForDeclarationFile(
   const cacheFile =
     listPropertyDocs || allowMissingSymbols || followImports || followReExports
       ? undefined
-      : await getCacheFile(inputFile, cwd, symbols, heading, reverseSymbols)
+      : await getCacheFile(inputFile, cwd, symbols, heading, github, reverseSymbols)
   const cached = cacheFile ? await readCache(cacheFile) : undefined
   if (cached) {
     return {
@@ -343,6 +355,7 @@ async function generateMarkdownForDeclarationFile(
           cwd,
           followImports,
           followReExports,
+          github,
           inputFile,
           propertyDocs,
           reverseSymbols,
@@ -447,6 +460,7 @@ interface RenderContext {
   cwd: string
   followImports: boolean
   followReExports: boolean
+  github?: GitHubOptions
   inputFile: string
   propertyDocs: PropertyDocMode
   reverseSymbols: boolean
@@ -571,7 +585,9 @@ async function renderDeclarationBody(
       })
       .join('\n')
 
-    declarationSections.push(renderDeclarationSection(entry.exportedName, docs, code, propertyDocs))
+    declarationSections.push(
+      renderDeclarationSection(entry.exportedName, docs, code, propertyDocs, context?.github),
+    )
   }
 
   const symbolSections = [
@@ -1657,10 +1673,24 @@ function renderDeclarationSection(
   docs: string,
   code: string,
   propertyDocs: readonly PropertyDoc[] = [],
+  github?: GitHubOptions,
 ) {
-  return [`## \`${name}\``, docs, renderCodeBlock(code), renderPropertyDocs(propertyDocs)]
+  return [
+    `## \`${name}\``,
+    docs,
+    renderCodeBlock(code),
+    renderPropertyDocs(propertyDocs),
+    renderGitHubSearchLink(name, github),
+  ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function renderGitHubSearchLink(name: string, github?: GitHubOptions) {
+  if (!github?.searchLinks || !github.repository) return ''
+
+  const query = `repo%3A${github.repository}%20${encodeURIComponent(name)}`
+  return `[<sup>🔍 **${name}** on GitHub</sup>](https://github.com/search?q=${query}&type=code)`
 }
 
 function renderPropertyDocs(propertyDocs: readonly PropertyDoc[]) {
@@ -1691,6 +1721,7 @@ async function getCacheFile(
   cwd: string,
   symbols: readonly string[],
   heading: string,
+  github: GitHubOptions | undefined,
   reverseSymbols: boolean,
 ) {
   const source = await readFile(inputFile, 'utf8')
@@ -1713,10 +1744,18 @@ async function getCacheFile(
     .update('\0')
     .update(heading)
     .update('\0')
-    .update(JSON.stringify({ reverseSymbols }))
+    .update(JSON.stringify({ github, reverseSymbols }))
     .digest('hex')
 
   return join(tmpdir(), 'exports-md', `${hash}.json`)
+}
+
+function normalizeGitHubOptions(github: GitHubOptions | undefined) {
+  if (!github?.searchLinks) return github
+  if (!github.repository) {
+    throw new Error('github.repository is required when github.searchLinks is enabled.')
+  }
+  return github
 }
 
 function findTsConfig(inputFile: string) {
@@ -1891,6 +1930,15 @@ const app = command({
       description:
         'Render relative re-exported declarations instead of only printing export-from lines.',
     }),
+    githubRepository: option({
+      type: optional(string),
+      long: 'github.repository',
+      description: 'GitHub repository to use for generated links, formatted as owner/repo.',
+    }),
+    githubSearchLinks: flag({
+      long: 'github.searchLinks',
+      description: 'Append a GitHub code search link to each symbol section.',
+    }),
     reverseSymbols: flag({
       long: 'reverseSymbols',
       short: 'r',
@@ -1907,6 +1955,8 @@ const app = command({
     follow,
     followImports,
     followReExports,
+    githubRepository,
+    githubSearchLinks,
     outDir,
     propertyDocs,
     query,
@@ -1915,6 +1965,10 @@ const app = command({
     const result = await generateMarkdownForInputs(query.inputs, {
       followImports: follow || followImports || undefined,
       followReExports: follow || followReExports || undefined,
+      github: {
+        repository: githubRepository,
+        searchLinks: githubSearchLinks,
+      },
       outDir,
       propertyDocs,
       reverseSymbols,

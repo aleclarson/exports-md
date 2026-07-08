@@ -12,10 +12,15 @@ export interface GenerateMarkdownOptions {
   cwd?: string;
   followImports?: boolean;
   followReExports?: boolean;
+  github?: GitHubOptions;
   outDir?: string;
   propertyDocs?: PropertyDocMode;
   reverseSymbols?: boolean;
   symbols?: string[];
+}
+export interface GitHubOptions {
+  repository?: string;
+  searchLinks?: boolean;
 }
 // #endregion
 

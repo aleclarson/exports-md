@@ -161,6 +161,46 @@ export const third = true
   expect(result.markdown.indexOf('## `second`')).toBeLessThan(result.markdown.indexOf('## `First`'))
 })
 
+test('appends GitHub search links to symbol sections when requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+/** Available log levels. */
+export type LogLevel = 'debug' | 'info'
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    github: {
+      repository: 'aleclarson/leylines',
+      searchLinks: true,
+    },
+  })
+
+  expect(result.markdown).toContain(
+    '[<sup>🔍 **LogLevel** on GitHub</sup>](https://github.com/search?q=repo%3Aaleclarson/leylines%20LogLevel&type=code)',
+  )
+})
+
+test('requires a GitHub repository when search links are enabled', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+  await writeFile(inputFile, '/** The answer. */\nexport const answer = 42\n')
+
+  await expect(
+    generateMarkdownForModule(inputFile, {
+      cwd: project,
+      github: {
+        searchLinks: true,
+      },
+    }),
+  ).rejects.toThrow('github.repository is required when github.searchLinks is enabled.')
+})
+
 test('rewrites aliased type declarations without dropping type constraints', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
@@ -795,6 +835,38 @@ export function second(): string {
   expect(stdout).toMatch(/^# second.ts$/m)
   expect(stdout).toContain('## `second`')
   expect(stdout.indexOf('# first.ts')).toBeLessThan(stdout.indexOf('# second.ts'))
+})
+
+test('prints GitHub search links from CLI options', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+/** Parses input. */
+export function parse(input: string) {
+  return input
+}
+`,
+  )
+
+  const { stdout } = await execFile(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      join(process.cwd(), 'src/index.ts'),
+      inputFile,
+      '--github.repository',
+      'aleclarson/leylines',
+      '--github.searchLinks',
+    ],
+    { cwd: project },
+  )
+
+  expect(stdout).toContain(
+    '[<sup>🔍 **parse** on GitHub</sup>](https://github.com/search?q=repo%3Aaleclarson/leylines%20parse&type=code)',
+  )
 })
 
 test('writes package markdown entries to an output directory', async () => {
