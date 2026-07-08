@@ -43,6 +43,7 @@ export interface GenerateMarkdownOptions {
   propertyDocs?: PropertyDocMode
   reverseSymbols?: boolean
   sortExports?: boolean
+  sortSymbols?: boolean
   symbols?: string[]
 }
 
@@ -159,6 +160,7 @@ async function generateMarkdownForInput(
   const propertyDocs = options.propertyDocs ?? 'inline'
   const reverseSymbols = options.reverseSymbols ?? false
   const sortExports = options.sortExports ?? false
+  const sortSymbols = options.sortSymbols ?? false
 
   if (isPackageJson(inputFile)) {
     return generateMarkdownForPackage(
@@ -171,6 +173,7 @@ async function generateMarkdownForInput(
       propertyDocs,
       reverseSymbols,
       sortExports,
+      sortSymbols,
       options.outDir,
       allowMissingSymbols,
     )
@@ -190,6 +193,7 @@ async function generateMarkdownForInput(
     propertyDocs,
     reverseSymbols,
     sortExports,
+    sortSymbols,
     undefined,
     allowMissingSymbols,
   )
@@ -265,6 +269,7 @@ async function generateMarkdownForPackage(
   propertyDocs: PropertyDocMode,
   reverseSymbols: boolean,
   sortExports: boolean,
+  sortSymbols: boolean,
   outDir?: string,
   allowMissingSymbols = false,
 ): Promise<GeneratedMarkdown & { foundSymbols: Set<string> }> {
@@ -285,6 +290,7 @@ async function generateMarkdownForPackage(
           propertyDocs,
           reverseSymbols,
           sortExports,
+          sortSymbols,
           heading,
           symbols.length > 0 || allowMissingSymbols,
         )
@@ -331,6 +337,7 @@ async function generateMarkdownForDeclarationFile(
   propertyDocs: PropertyDocMode,
   reverseSymbols: boolean,
   sortExports: boolean,
+  sortSymbols: boolean,
   heading = basename(inputFile),
   allowMissingSymbols = false,
 ): Promise<GeneratedMarkdown & { foundSymbols: Set<string> }> {
@@ -339,7 +346,16 @@ async function generateMarkdownForDeclarationFile(
   const cacheFile =
     listPropertyDocs || allowMissingSymbols || followImports || followReExports
       ? undefined
-      : await getCacheFile(inputFile, cwd, symbols, heading, github, reverseSymbols, sortExports)
+      : await getCacheFile(
+          inputFile,
+          cwd,
+          symbols,
+          heading,
+          github,
+          reverseSymbols,
+          sortExports,
+          sortSymbols,
+        )
   const cached = cacheFile ? await readCache(cacheFile) : undefined
   if (cached) {
     return {
@@ -372,6 +388,7 @@ async function generateMarkdownForDeclarationFile(
           propertyDocs,
           reverseSymbols,
           sortExports,
+          sortSymbols,
           visited: new Set([resolve(inputFile)]),
         })
 
@@ -478,6 +495,7 @@ interface RenderContext {
   propertyDocs: PropertyDocMode
   reverseSymbols: boolean
   sortExports: boolean
+  sortSymbols: boolean
   visited: Set<string>
 }
 
@@ -569,7 +587,10 @@ async function renderDeclarationBody(
 
   const declarationSections: string[] = []
 
-  for (const entries of groupDeclarationEntries(ts, includedWithOverrides, context?.sortExports)) {
+  for (const entries of groupDeclarationEntries(ts, includedWithOverrides, {
+    sortExports: context?.sortExports,
+    sortSymbols: context?.sortSymbols,
+  })) {
     const entry = entries[0]!
     const { statement } = entry
     const localName = getStatementName(ts, statement)
@@ -796,7 +817,11 @@ async function renderFollowedReExportSections(
   }
 }
 
-function groupDeclarationEntries(ts: TypeScript, entries: DeclarationEntry[], sortExports = false) {
+function groupDeclarationEntries(
+  ts: TypeScript,
+  entries: DeclarationEntry[],
+  options: { sortExports?: boolean; sortSymbols?: boolean } = {},
+) {
   const groups = new Map<string, DeclarationEntry[]>()
 
   for (const entry of entries) {
@@ -809,11 +834,16 @@ function groupDeclarationEntries(ts: TypeScript, entries: DeclarationEntry[], so
   }
 
   const grouped = [...groups.values()]
-  if (!sortExports) return grouped
+  if (!options.sortExports && !options.sortSymbols) return grouped
 
   return grouped.sort(
     (left, right) =>
-      getDeclarationEntrySortOrder(ts, left[0]!) - getDeclarationEntrySortOrder(ts, right[0]!) ||
+      (options.sortExports
+        ? getDeclarationEntrySortOrder(ts, left[0]!) - getDeclarationEntrySortOrder(ts, right[0]!)
+        : 0) ||
+      (options.sortSymbols
+        ? compareSymbolNames(left[0]!.exportedName, right[0]!.exportedName)
+        : 0) ||
       left[0]!.index - right[0]!.index,
   )
 }
@@ -834,6 +864,25 @@ function isConstDeclaration(ts: TypeScript, statement: Statement) {
     ts.isVariableStatement(statement) &&
     (ts.getCombinedNodeFlags(statement.declarationList) & ts.NodeFlags.Const) !== 0
   )
+}
+
+function compareSymbolNames(left: string, right: string) {
+  return (
+    getSymbolNameSortBucket(left) - getSymbolNameSortBucket(right) ||
+    left.localeCompare(right, 'en', { caseFirst: 'lower', sensitivity: 'variant' })
+  )
+}
+
+function getSymbolNameSortBucket(name: string) {
+  if (isAllCapsSymbolName(name)) return 2
+
+  const firstLetter = /[A-Za-z]/.exec(name)?.[0]
+  return firstLetter && firstLetter === firstLetter.toLowerCase() ? 0 : 1
+}
+
+function isAllCapsSymbolName(name: string) {
+  const normalized = name.replace(/[_$]/g, '')
+  return /[A-Za-z]/.test(normalized) && normalized === normalized.toUpperCase()
 }
 
 function renderDeclarationCode(
@@ -1768,6 +1817,7 @@ async function getCacheFile(
   github: GitHubOptions | undefined,
   reverseSymbols: boolean,
   sortExports: boolean,
+  sortSymbols: boolean,
 ) {
   const source = await readFile(inputFile, 'utf8')
   const configPath = findTsConfig(inputFile)
@@ -1789,7 +1839,7 @@ async function getCacheFile(
     .update('\0')
     .update(heading)
     .update('\0')
-    .update(JSON.stringify({ github, reverseSymbols, sortExports }))
+    .update(JSON.stringify({ github, reverseSymbols, sortExports, sortSymbols }))
     .digest('hex')
 
   return join(tmpdir(), 'exports-md', `${hash}.json`)
@@ -1994,6 +2044,11 @@ const app = command({
       description:
         'Print same-module exports by category: functions, classes, constants, other non-types, then types.',
     }),
+    sortSymbols: flag({
+      long: 'sortSymbols',
+      description:
+        'Print same-module exports alphabetically, with lowercase symbols first and all-caps symbols last.',
+    }),
     propertyDocs: option({
       type: optional(oneOf(propertyDocModes)),
       long: 'property-docs',
@@ -2012,6 +2067,7 @@ const app = command({
     query,
     reverseSymbols,
     sortExports,
+    sortSymbols,
   }) {
     const result = await generateMarkdownForInputs(query.inputs, {
       followImports: follow || followImports || undefined,
@@ -2024,6 +2080,7 @@ const app = command({
       propertyDocs,
       reverseSymbols,
       sortExports,
+      sortSymbols,
       symbols: query.symbols,
     })
     if (!outDir) {

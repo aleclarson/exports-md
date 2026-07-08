@@ -180,6 +180,122 @@ export namespace metadata {
   ])
 })
 
+test('orders same-module exports alphabetically when requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+export const _API = true
+export const Banana = true
+export const apple = true
+export const $URL = true
+export const carrot = true
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, { cwd: project, sortSymbols: true })
+  const headings = [...result.markdown.matchAll(/^## `([^`]+)`$/gm)].map((match) => match[1])
+
+  expect(headings).toEqual(['apple', 'carrot', 'Banana', '_API', '$URL'])
+})
+
+test('orders same-module exports by category before symbol name when both sorts are requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+export type BetaOptions = {
+  enabled: boolean
+}
+
+export const _API = true
+
+export class ZetaClient {}
+
+export function makeClient() {
+  return new AlphaClient()
+}
+
+export const apple = true
+
+export class AlphaClient {}
+
+export function buildClient() {
+  return new ZetaClient()
+}
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    sortExports: true,
+    sortSymbols: true,
+  })
+  const headings = [...result.markdown.matchAll(/^## `([^`]+)`$/gm)].map((match) => match[1])
+
+  expect(headings).toEqual([
+    'buildClient',
+    'makeClient',
+    'AlphaClient',
+    'ZetaClient',
+    'apple',
+    '_API',
+    'BetaOptions',
+  ])
+})
+
+test('reverses sorted same-module exports after category and symbol sorting', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+export type BetaOptions = {
+  enabled: boolean
+}
+
+export const API = true
+
+export class ZetaClient {}
+
+export function makeClient() {
+  return new AlphaClient()
+}
+
+export const apple = true
+
+export class AlphaClient {}
+
+export function buildClient() {
+  return new ZetaClient()
+}
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    reverseSymbols: true,
+    sortExports: true,
+    sortSymbols: true,
+  })
+  const headings = [...result.markdown.matchAll(/^## `([^`]+)`$/gm)].map((match) => match[1])
+
+  expect(headings).toEqual([
+    'BetaOptions',
+    'API',
+    'apple',
+    'ZetaClient',
+    'AlphaClient',
+    'makeClient',
+    'buildClient',
+  ])
+})
+
 test('reuses cached markdown for unchanged inputs', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
@@ -861,6 +977,27 @@ export function createConfig(): Config {
   )
 
   expect(stdout.indexOf('## `createConfig`')).toBeLessThan(stdout.indexOf('## `Config`'))
+})
+
+test('sorts same-module symbols alphabetically from the CLI when requested', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.ts')
+
+  await writeFile(
+    inputFile,
+    `
+export const zebra = true
+export const apple = true
+`,
+  )
+
+  const { stdout } = await execFile(
+    process.execPath,
+    ['--experimental-strip-types', join(process.cwd(), 'src/index.ts'), inputFile, '--sortSymbols'],
+    { cwd: project },
+  )
+
+  expect(stdout.indexOf('## `apple`')).toBeLessThan(stdout.indexOf('## `zebra`'))
 })
 
 test('prints package entry symbols in reverse order when requested', async () => {

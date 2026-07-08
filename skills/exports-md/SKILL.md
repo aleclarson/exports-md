@@ -47,6 +47,18 @@ Print same-module exports by category when a consumer benefits from functions be
 exports-md path/to/module.ts --sortExports
 ```
 
+Print same-module exports alphabetically when a consumer benefits from stable symbol names. Lowercase symbols come first, and all-caps symbols come last:
+
+```sh
+exports-md path/to/module.ts --sortSymbols
+```
+
+Combine sorting options when useful. Reverse order is applied after entity-type and alphabetical sorting:
+
+```sh
+exports-md path/to/module.ts --sortExports --sortSymbols --reverseSymbols
+```
+
 Render every declaration entry point from a package export map:
 
 ```sh
