@@ -1039,7 +1039,7 @@ export interface FeatureOptions {
       '--experimental-strip-types',
       join(process.cwd(), 'src/index.ts'),
       inputFile,
-      '--property-docs',
+      '--propertyDocs',
       'list',
     ],
     { cwd: project },

@@ -2196,7 +2196,7 @@ const app = command({
     }),
     propertyDocs: option({
       type: optional(oneOf(propertyDocModes)),
-      long: 'property-docs',
+      long: 'propertyDocs',
       description: 'Render property TSDoc comments inline or as a list below declaration code.',
     }),
     query: cliInputsAndSymbols(),

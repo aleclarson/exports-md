@@ -47,7 +47,7 @@ exports-md src/index.ts -r
 Render property TSDoc comments below declaration code blocks as a `**Properties**` list:
 
 ```sh
-exports-md src/index.ts --property-docs list
+exports-md src/index.ts --propertyDocs list
 ```
 
 Append a GitHub code search link to each symbol section:
@@ -86,7 +86,7 @@ exports-md package.json -o docs/api
 
 `exports-md` resolves the nearest `node_modules/typescript` from the current working directory, so declaration emit uses the TypeScript version installed by the target project.
 
-The tool emits declarations in memory, parses the resulting `.d.ts`, and renders Markdown sections from exported declarations and their leading TSDoc comments. Property TSDoc comments stay inside declaration code blocks by default. With `--property-docs list`, property comments are removed from interface and object type code blocks and rendered below the block as a `**Properties**` list. When a symbol query is provided, the output includes requested exports plus local declaration dependencies needed to understand their signatures. With `--groupBySyntax`, same-module export sections are grouped under H2 headings by category: functions, classes, constants, remaining non-types, then types. Symbols inside those groups use H3 headings. With `--sortByName`, same-module export sections are printed alphabetically, with lowercase symbols first and all-caps symbols last. When both sort options are used, export category takes precedence over symbol name. With `--reverseSymbols`, rendered symbol sections are printed in reverse order after sorting while heading and reference import/re-export blocks stay in place.
+The tool emits declarations in memory, parses the resulting `.d.ts`, and renders Markdown sections from exported declarations and their leading TSDoc comments. Property TSDoc comments stay inside declaration code blocks by default. With `--propertyDocs list`, property comments are removed from interface and object type code blocks and rendered below the block as a `**Properties**` list. When a symbol query is provided, the output includes requested exports plus local declaration dependencies needed to understand their signatures. With `--groupBySyntax`, same-module export sections are grouped under H2 headings by category: functions, classes, constants, remaining non-types, then types. Symbols inside those groups use H3 headings. With `--sortByName`, same-module export sections are printed alphabetically, with lowercase symbols first and all-caps symbols last. When both sort options are used, export category takes precedence over symbol name. With `--reverseSymbols`, rendered symbol sections are printed in reverse order after sorting while heading and reference import/re-export blocks stay in place.
 
 With `--github.searchLinks`, every symbol section ends with a GitHub code search link. Set `--github.repository` to the `owner/repo` repository name used by those links.
 
