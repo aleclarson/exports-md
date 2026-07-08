@@ -728,6 +728,52 @@ export { type JsonRecord, parsePatch };
   expect(result.warnings).toEqual([])
 })
 
+test('sorts merged grouped followed re-exports by symbol name', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'index.d.mts')
+
+  await writeFile(
+    join(project, 'schema.d.mts'),
+    `
+/** Alpha record docs. */
+export interface A {
+  value: string
+}
+
+/** Build patch docs. */
+export declare function B(input: A): A
+`,
+  )
+  await writeFile(
+    inputFile,
+    `
+import { A as AlphaRecord, B as buildPatch } from "./schema.mjs";
+
+/** Zed options docs. */
+export interface ZedOptions {
+  enabled: boolean
+}
+
+/** Zed factory docs. */
+export declare function zedFactory(options: ZedOptions): AlphaRecord
+
+export { type AlphaRecord, buildPatch };
+`,
+  )
+
+  const result = await generateMarkdownForModule(inputFile, {
+    cwd: project,
+    followReExports: true,
+    groupBySyntax: true,
+    sortByName: true,
+  })
+  const groups = [...result.markdown.matchAll(/^## ([^\n]+)$/gm)].map((match) => match[1])
+  const headings = [...result.markdown.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1])
+
+  expect(groups).toEqual(['Functions', 'Types'])
+  expect(headings).toEqual(['buildPatch', 'zedFactory', 'AlphaRecord', 'ZedOptions'])
+})
+
 test('uses public aliases for dependencies exported as minified chunk names', async () => {
   const project = await createProject()
   const inputFile = join(project, 'index.d.mts')

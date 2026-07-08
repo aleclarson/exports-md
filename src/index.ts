@@ -619,6 +619,10 @@ async function renderDeclarationBody(
       context.reverseSymbols
         ? [...followedSections.toReversed(), ...declarationSections]
         : [...declarationSections, ...followedSections],
+      {
+        reverseSymbols: context.reverseSymbols,
+        sortByName: context.sortByName,
+      },
     )
     sections.push(...groupedSections)
     return sections
@@ -677,7 +681,10 @@ function renderDeclarationSections(
   )
 }
 
-function mergeGroupedDeclarationSections(sections: string[]) {
+function mergeGroupedDeclarationSections(
+  sections: string[],
+  options: { reverseSymbols?: boolean; sortByName?: boolean } = {},
+) {
   const merged = new Map<string, string[]>()
   const output: Array<{ heading?: string; section?: string }> = []
 
@@ -689,11 +696,12 @@ function mergeGroupedDeclarationSections(sections: string[]) {
     }
 
     const [, heading, body] = match
+    const symbolSections = splitGroupedSymbolSections(body)
     const bodies = merged.get(heading)
     if (bodies) {
-      bodies.push(body)
+      bodies.push(...symbolSections)
     } else {
-      merged.set(heading, [body])
+      merged.set(heading, symbolSections)
       output.push({ heading })
     }
   }
@@ -701,8 +709,24 @@ function mergeGroupedDeclarationSections(sections: string[]) {
   return output.map((entry) => {
     if (entry.section) return entry.section
 
-    return [`## ${entry.heading}`, ...merged.get(entry.heading!)!].join('\n\n')
+    let sections = merged.get(entry.heading!)!
+    if (options.sortByName) {
+      sections = sections.toSorted((left, right) =>
+        compareSymbolNames(getGroupedSymbolName(left), getGroupedSymbolName(right)),
+      )
+      if (options.reverseSymbols) sections = sections.toReversed()
+    }
+
+    return [`## ${entry.heading}`, ...sections].join('\n\n')
   })
+}
+
+function splitGroupedSymbolSections(body: string) {
+  return body.split(/\n\n(?=### `)/)
+}
+
+function getGroupedSymbolName(section: string) {
+  return /^### `([^`]+)`/.exec(section)?.[1] ?? ''
 }
 
 function renderSymbolDeclarationSection(
