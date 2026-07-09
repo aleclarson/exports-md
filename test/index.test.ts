@@ -1075,7 +1075,7 @@ export function createConfig(): Config {
       '--experimental-strip-types',
       join(process.cwd(), 'src/index.ts'),
       inputFile,
-      '--groupBySyntax',
+      '-g',
     ],
     { cwd: project },
   )
@@ -1097,7 +1097,7 @@ export const apple = true
 
   const { stdout } = await execFile(
     process.execPath,
-    ['--experimental-strip-types', join(process.cwd(), 'src/index.ts'), inputFile, '--sortByName'],
+    ['--experimental-strip-types', join(process.cwd(), 'src/index.ts'), inputFile, '-s'],
     { cwd: project },
   )
 

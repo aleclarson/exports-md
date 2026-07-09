@@ -2186,11 +2186,13 @@ const app = command({
     }),
     groupBySyntax: flag({
       long: 'groupBySyntax',
+      short: 'g',
       description:
         'Group same-module exports by syntax category: functions, classes, constants, other non-types, then types.',
     }),
     sortByName: flag({
       long: 'sortByName',
+      short: 's',
       description:
         'Sort same-module exports by name, with lowercase symbols first and all-caps symbols last.',
     }),
