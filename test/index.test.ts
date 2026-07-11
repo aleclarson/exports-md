@@ -629,6 +629,42 @@ export * as namespace from './namespace'
   expect(result.markdown).not.toContain('Namespaced value docs.')
 })
 
+test('keeps external imports above symbols with every sorting option', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'index.d.ts')
+
+  await writeFile(
+    join(project, 'feature.d.ts'),
+    `
+import type { ExternalInput } from 'external-package'
+
+export interface Feature {
+  input: ExternalInput
+}
+`,
+  )
+  await writeFile(inputFile, "export type { Feature } from './feature'\n")
+
+  for (const groupBySyntax of [false, true]) {
+    for (const sortByName of [false, true]) {
+      for (const reverseSymbols of [false, true]) {
+        const result = await generateMarkdownForModule(inputFile, {
+          cwd: project,
+          followReExports: true,
+          groupBySyntax,
+          sortByName,
+          reverseSymbols,
+        })
+        const importIndex = result.markdown.indexOf('external-package')
+        const symbolIndex = result.markdown.indexOf(groupBySyntax ? '### `Feature`' : '## `Feature`')
+
+        expect(importIndex).toBeGreaterThan(-1)
+        expect(importIndex).toBeLessThan(symbolIndex)
+      }
+    }
+  }
+})
+
 test('follows imported aliases exported through a local export list when requested', async () => {
   const project = await createProject()
   const inputFile = join(project, 'index.d.mts')

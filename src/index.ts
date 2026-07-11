@@ -16,7 +16,7 @@ import type {
 } from 'typescript'
 
 type TypeScript = typeof import('typescript')
-const cacheVersion = 6
+const cacheVersion = 7
 const packageVersion = '0.0.0'
 export type PropertyDocMode = 'inline' | 'list'
 
@@ -516,7 +516,8 @@ async function renderDeclarationMarkdown(
   context?: RenderContext,
 ) {
   const sections = [`# ${heading}`]
-  sections.push(...(await renderDeclarationBody(ts, declaration, requestedSymbols, context)))
+  const body = await renderDeclarationBody(ts, declaration, requestedSymbols, context)
+  sections.push(...body.references, ...body.symbols)
 
   return `${sections.join('\n\n').trimEnd()}\n`
 }
@@ -557,7 +558,7 @@ async function renderDeclarationBody(
   const includedReExports = selectReExportEntries(reExports, requested)
   const followedReExports = context?.followReExports
     ? await renderFollowedReExportSections(ts, includedReExports, requested, context)
-    : { followed: new Set<ReExportEntry>(), sections: [] }
+    : { followed: new Set<ReExportEntry>(), references: [], symbols: [] }
   const unresolvedReExports = context?.followReExports
     ? includedReExports.filter((entry) => !followedReExports.followed.has(entry))
     : includedReExports
@@ -569,7 +570,7 @@ async function renderDeclarationBody(
         importedReExports,
         context,
       )
-    : { followed: new Set<ImportedReExportEntry>(), sections: [] }
+    : { followed: new Set<ImportedReExportEntry>(), references: [], symbols: [] }
   const importedNames = collectReferencedImportedNames(ts, included, imports, declarations)
   const includedImports = imports.filter((entry) =>
     [...entry.importedNames].some((name) => importedNames.has(name)),
@@ -582,17 +583,18 @@ async function renderDeclarationBody(
         importedReExports,
         context,
       )
-    : { followed: new Set<ImportEntry>(), sections: [] }
+    : { followed: new Set<ImportEntry>(), references: [], symbols: [] }
   const unresolvedImports = context?.followImports
     ? includedImports.filter((entry) => !followedImports.followed.has(entry))
     : includedImports
   const referenceEntries = [...unresolvedImports, ...unresolvedReExports].sort(
     (left, right) => left.index - right.index,
   )
-  const sections: string[] = []
+  // References stay separate while followed declarations are sorted so nested imports remain first.
+  const references: string[] = []
 
   if (referenceEntries.length > 0) {
-    sections.push(renderCodeBlock(referenceEntries.map((entry) => entry.code).join('\n')))
+    references.push(renderCodeBlock(referenceEntries.map((entry) => entry.code).join('\n')))
   }
 
   const includedWithOverrides = included.map((entry) => ({
@@ -609,10 +611,15 @@ async function renderDeclarationBody(
     context,
   )
   const followedSections = [
-    ...followedImports.sections,
-    ...followedImportedReExports.sections,
-    ...followedReExports.sections,
+    ...followedImports.symbols,
+    ...followedImportedReExports.symbols,
+    ...followedReExports.symbols,
   ]
+  references.push(
+    ...followedImports.references,
+    ...followedImportedReExports.references,
+    ...followedReExports.references,
+  )
 
   if (context?.groupBySyntax) {
     const groupedSections = mergeGroupedDeclarationSections(
@@ -624,14 +631,14 @@ async function renderDeclarationBody(
         sortByName: context.sortByName,
       },
     )
-    sections.push(...groupedSections)
-    return sections
+    return { references, symbols: groupedSections }
   }
 
   const symbolSections = [...declarationSections, ...followedSections]
-  sections.push(...(context?.reverseSymbols ? symbolSections.toReversed() : symbolSections))
-
-  return sections
+  return {
+    references,
+    symbols: context?.reverseSymbols ? symbolSections.toReversed() : symbolSections,
+  }
 }
 
 function renderDeclarationSections(
@@ -798,7 +805,6 @@ async function renderFollowedImportSections(
   context: RenderContext,
 ) {
   const followed = new Set<ImportEntry>()
-  const sections: string[] = []
 
   for (const entry of imports) {
     const requestedSourceNames = getImportRequestedSourceNames(entry, importedNames)
@@ -839,7 +845,8 @@ async function renderFollowedImportSections(
 
   return {
     followed,
-    sections,
+    references: [] as string[],
+    symbols: [] as string[],
   }
 }
 
@@ -850,7 +857,8 @@ async function renderFollowedImportedReExportSections(
   context: RenderContext,
 ) {
   const followed = new Set<ImportedReExportEntry>()
-  const sections: string[] = []
+  const references: string[] = []
+  const symbols: string[] = []
   const groups = new Map<ImportEntry, ImportedReExportEntry[]>()
 
   for (const entry of entries) {
@@ -885,15 +893,15 @@ async function renderFollowedImportedReExportSections(
       visited: new Set([...context.visited, resolve(targetFile)]),
     }
 
-    sections.push(
-      ...(await renderDeclarationBody(
-        ts,
-        targetDeclaration,
-        group.map((entry) => entry.sourceName),
-        targetContext,
-        overrides,
-      )),
+    const body = await renderDeclarationBody(
+      ts,
+      targetDeclaration,
+      group.map((entry) => entry.sourceName),
+      targetContext,
+      overrides,
     )
+    references.push(...body.references)
+    symbols.push(...body.symbols)
 
     for (const entry of group) {
       followed.add(entry)
@@ -902,7 +910,8 @@ async function renderFollowedImportedReExportSections(
 
   return {
     followed,
-    sections,
+    references,
+    symbols,
   }
 }
 
@@ -913,7 +922,8 @@ async function renderFollowedReExportSections(
   context: RenderContext,
 ) {
   const followed = new Set<ReExportEntry>()
-  const sections: string[] = []
+  const references: string[] = []
+  const symbols: string[] = []
 
   for (const entry of reExports) {
     if (isNamespaceReExport(ts, entry)) continue
@@ -937,21 +947,22 @@ async function renderFollowedReExportSections(
       visited: new Set([...context.visited, resolve(targetFile)]),
     }
 
-    sections.push(
-      ...(await renderDeclarationBody(
-        ts,
-        targetDeclaration,
-        requestedSourceNames,
-        targetContext,
-        overrides,
-      )),
+    const body = await renderDeclarationBody(
+      ts,
+      targetDeclaration,
+      requestedSourceNames,
+      targetContext,
+      overrides,
     )
+    references.push(...body.references)
+    symbols.push(...body.symbols)
     followed.add(entry)
   }
 
   return {
     followed,
-    sections,
+    references,
+    symbols,
   }
 }
 
