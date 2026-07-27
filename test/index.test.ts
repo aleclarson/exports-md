@@ -947,6 +947,7 @@ export interface FeatureOptions {
             import: './dist/runtime.js',
           },
           './feature': './dist/feature.js',
+          './package.json': './package.json',
         },
       },
       null,
@@ -961,6 +962,7 @@ export interface FeatureOptions {
   expect(result.markdown).toContain('## `createMain`')
   expect(result.markdown).toMatch(/^# foo\/feature$/m)
   expect(result.markdown).toContain('## `FeatureOptions`')
+  expect(result.markdown).not.toContain('# foo/package.json')
 })
 
 test('keeps package property docs inline by default', async () => {

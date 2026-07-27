@@ -1299,7 +1299,7 @@ function readPackageEntryPoints(packageJsonFile: string, packageJson: { exports?
     for (const [subpath, value] of Object.entries(exportsField)) {
       const entryTargets = collectDeclarationTargets(value)
       if (entryTargets.length === 0) {
-        throw new Error(`Could not derive a declaration entry point from exports["${subpath}"].`)
+        continue
       }
       for (const target of entryTargets) {
         entryPoints.push({
