@@ -965,6 +965,51 @@ export interface FeatureOptions {
   expect(result.markdown).not.toContain('# foo/package.json')
 })
 
+test('renders package exports from a directory input', async () => {
+  const project = await createProject()
+  const packageRoot = join(project, 'packages', 'foo')
+  const packageJson = join(packageRoot, 'package.json')
+
+  await mkdir(join(packageRoot, 'dist'), { recursive: true })
+  await writeFile(
+    join(packageRoot, 'dist', 'index.d.ts'),
+    `
+/** Main API. */
+export declare function createMain(): string
+`,
+  )
+  await writeFile(
+    packageJson,
+    JSON.stringify(
+      {
+        name: 'foo',
+        exports: './dist/index.js',
+      },
+      null,
+      2,
+    ),
+  )
+
+  const { stdout } = await execFile(
+    process.execPath,
+    ['--experimental-strip-types', join(process.cwd(), 'src/index.ts'), packageRoot],
+    { cwd: project },
+  )
+
+  expect(stdout).toMatch(/^# foo$/m)
+  expect(stdout).toContain('## `createMain`')
+})
+
+test('fails clearly when a directory input has no package manifest', async () => {
+  const project = await createProject()
+  const packageRoot = join(project, 'packages', 'foo')
+  await mkdir(packageRoot, { recursive: true })
+
+  await expect(generateMarkdownForModule(packageRoot, { cwd: project })).rejects.toThrow(
+    `Package manifest not found in directory: ${join(packageRoot, 'package.json')}`,
+  )
+})
+
 test('keeps package property docs inline by default', async () => {
   const project = await createProject()
   const packageJson = join(project, 'package.json')

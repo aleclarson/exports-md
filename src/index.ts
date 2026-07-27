@@ -154,7 +154,8 @@ async function generateMarkdownForInput(
   allowMissingSymbols = false,
 ): Promise<GeneratedMarkdown & { foundSymbols: Set<string> }> {
   const cwd = resolve(options.cwd ?? process.cwd())
-  const inputFile = resolve(cwd, modulePath)
+  const inputPath = resolve(cwd, modulePath)
+  const inputFile = isDirectory(inputPath) ? join(inputPath, 'package.json') : inputPath
   const symbols = normalizeSymbols(options.symbols ?? [])
   const followImports = options.followImports ?? isPackageJson(inputFile)
   const followReExports = options.followReExports ?? isPackageJson(inputFile)
@@ -163,6 +164,10 @@ async function generateMarkdownForInput(
   const reverseSymbols = options.reverseSymbols ?? false
   const groupBySyntax = options.groupBySyntax ?? false
   const sortByName = options.sortByName ?? false
+
+  if (inputFile !== inputPath && !isFile(inputFile)) {
+    throw new Error(`Package manifest not found in directory: ${inputFile}`)
+  }
 
   if (isPackageJson(inputFile)) {
     return generateMarkdownForPackage(

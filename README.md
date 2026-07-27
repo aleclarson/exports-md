@@ -68,6 +68,13 @@ Print documentation for every declaration entry point in a package export map:
 exports-md package.json
 ```
 
+Package directories are shorthand for their `package.json`:
+
+```sh
+exports-md .
+exports-md packages/foo
+```
+
 Package inputs follow relative imports and re-exports to their declarations by default. For a module input, enable either behavior explicitly:
 
 ```sh
