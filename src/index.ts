@@ -1,10 +1,22 @@
 #!/usr/bin/env node
-import { binary, command, flag, oneOf, option, optional, run, string } from 'cmd-ts'
+import {
+  binary,
+  boolean,
+  command,
+  flag,
+  oneOf,
+  option,
+  optional,
+  run,
+  string,
+  type Type,
+} from 'cmd-ts'
+import { determineAgent } from '@vercel/detect-agent'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import type {
   CompilerOptions,
@@ -139,6 +151,126 @@ interface CliParseContext {
 interface CliInputsAndSymbols {
   inputs: string[]
   symbols: string[]
+}
+
+interface CliConfig {
+  follow?: boolean
+  followImports?: boolean
+  followReExports?: boolean
+  github?: GitHubOptions
+  groupBySyntax?: boolean
+  outDir?: string
+  propertyDocs?: PropertyDocMode
+  reverseSymbols?: boolean
+  sortByName?: boolean
+}
+
+let cliConfigPromise: Promise<CliConfig> | undefined
+
+function getCliConfig() {
+  return (cliConfigPromise ??= loadCliConfig())
+}
+
+function withCliConfigDefault<From, To>(
+  type: Type<From, To>,
+  getDefault: (config: CliConfig) => To,
+): Type<From, To> {
+  const { defaultValue: _, onMissing: __, ...requiredType } = type
+  return {
+    ...requiredType,
+    onMissing: async () => getDefault(await getCliConfig()),
+  }
+}
+
+async function loadCliConfig(): Promise<CliConfig> {
+  if ((await determineAgent()).isAgent) return {}
+
+  const configFile = join(homedir(), '.config', 'exports-md.json')
+  let source: string
+
+  try {
+    source = await readFile(configFile, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    throw error
+  }
+
+  let value: unknown
+  try {
+    value = JSON.parse(source)
+  } catch (error) {
+    throw new Error(`Invalid JSON in ${configFile}: ${(error as Error).message}`)
+  }
+
+  if (!isRecord(value)) {
+    throw new Error(`Invalid config in ${configFile}: expected a JSON object.`)
+  }
+
+  const allowedKeys = new Set([
+    'follow',
+    'followImports',
+    'followReExports',
+    'github',
+    'groupBySyntax',
+    'outDir',
+    'propertyDocs',
+    'reverseSymbols',
+    'sortByName',
+  ])
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      throw new Error(`Invalid config in ${configFile}: unknown option ${JSON.stringify(key)}.`)
+    }
+  }
+
+  assertOptionalBooleanOptions(value, configFile, [
+    'follow',
+    'followImports',
+    'followReExports',
+    'groupBySyntax',
+    'reverseSymbols',
+    'sortByName',
+  ])
+  if (value.outDir !== undefined && typeof value.outDir !== 'string') {
+    throw new Error(`Invalid config in ${configFile}: "outDir" must be a string.`)
+  }
+  if (
+    value.propertyDocs !== undefined &&
+    !propertyDocModes.includes(value.propertyDocs as PropertyDocMode)
+  ) {
+    throw new Error(`Invalid config in ${configFile}: "propertyDocs" must be "inline" or "list".`)
+  }
+  if (value.github !== undefined) {
+    if (!isRecord(value.github)) {
+      throw new Error(`Invalid config in ${configFile}: "github" must be an object.`)
+    }
+    for (const key of Object.keys(value.github)) {
+      if (key !== 'repository' && key !== 'searchLinks') {
+        throw new Error(`Invalid config in ${configFile}: unknown "github.${key}" option.`)
+      }
+    }
+    if (value.github.repository !== undefined && typeof value.github.repository !== 'string') {
+      throw new Error(`Invalid config in ${configFile}: "github.repository" must be a string.`)
+    }
+    assertOptionalBooleanOptions(value.github, configFile, ['searchLinks'], 'github.')
+  }
+
+  return value as CliConfig
+}
+
+function assertOptionalBooleanOptions(
+  value: Record<string, unknown>,
+  configFile: string,
+  keys: readonly string[],
+  prefix = '',
+) {
+  for (const key of keys) {
+    if (value[key] !== undefined && typeof value[key] !== 'boolean') {
+      throw new Error(
+        `Invalid config in ${configFile}: ${JSON.stringify(`${prefix}${key}`)} must be a boolean.`,
+      )
+    }
+  }
 }
 
 export async function generateMarkdownForModule(
@@ -2165,55 +2297,65 @@ const app = command({
   description: 'Print Markdown docs for TypeScript module or package exports.',
   args: {
     outDir: option({
-      type: optional(string),
+      type: withCliConfigDefault(optional(string), (config) => config.outDir),
       long: 'outDir',
       short: 'o',
       description: 'Write package entry Markdown files to this directory.',
     }),
     follow: flag({
+      type: withCliConfigDefault(boolean, (config) => config.follow ?? false),
       long: 'follow',
       short: 'f',
       description: 'Render relative imported and re-exported declarations.',
     }),
     followImports: flag({
+      type: withCliConfigDefault(boolean, (config) => config.followImports ?? false),
       long: 'followImports',
       short: 'i',
       description: 'Render relative imported declarations instead of only printing import lines.',
     }),
     followReExports: flag({
+      type: withCliConfigDefault(boolean, (config) => config.followReExports ?? false),
       long: 'followReExports',
       short: 'e',
       description:
         'Render relative re-exported declarations instead of only printing export-from lines.',
     }),
     githubRepository: option({
-      type: optional(string),
+      type: withCliConfigDefault(optional(string), (config) => config.github?.repository),
       long: 'github.repository',
       description: 'GitHub repository to use for generated links, formatted as owner/repo.',
     }),
     githubSearchLinks: flag({
+      type: withCliConfigDefault(boolean, (config) => config.github?.searchLinks ?? false),
       long: 'github.searchLinks',
       description: 'Append a GitHub code search link to each symbol section.',
     }),
     reverseSymbols: flag({
+      type: withCliConfigDefault(boolean, (config) => config.reverseSymbols ?? false),
       long: 'reverseSymbols',
       short: 'r',
       description: 'Print rendered symbol sections in reverse order.',
     }),
     groupBySyntax: flag({
+      type: withCliConfigDefault(boolean, (config) => config.groupBySyntax ?? false),
       long: 'groupBySyntax',
       short: 'g',
       description:
         'Group same-module exports by syntax category: functions, classes, constants, other non-types, then types.',
     }),
     sortByName: flag({
+      type: withCliConfigDefault(boolean, (config) => config.sortByName ?? false),
       long: 'sortByName',
       short: 's',
       description:
         'Sort same-module exports by name, with lowercase symbols first and all-caps symbols last.',
     }),
     propertyDocs: option({
-      type: optional(oneOf(propertyDocModes)),
+      type: withCliConfigDefault(
+        optional(oneOf(propertyDocModes)),
+        (config) => config.propertyDocs,
+      ),
       long: 'propertyDocs',
       description: 'Render property TSDoc comments inline or as a list below declaration code.',
     }),

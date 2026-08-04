@@ -30,6 +30,7 @@
     "sync-agent-rules": "curl -fsSL https://gist.githubusercontent.com/aleclarson/4c80686b1c3e204a01cdbe82f8e2c084/raw/AGENTS.md -o AGENTS.md && git add AGENTS.md && git commit -m 'chore: sync agent rules'"
   },
   "dependencies": {
+    "@vercel/detect-agent": "^1.2.3",
     "cmd-ts": "^0.15.0"
   },
   "devDependencies": {

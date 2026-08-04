@@ -1135,6 +1135,66 @@ export interface FeatureOptions {
   )
 })
 
+test('uses human CLI defaults from ~/.config/exports-md.json', async () => {
+  const project = await createProject()
+  const home = await createProject()
+  const inputFile = join(project, 'api.d.ts')
+
+  await mkdir(join(home, '.config'), { recursive: true })
+  await writeFile(
+    join(home, '.config', 'exports-md.json'),
+    JSON.stringify({ propertyDocs: 'list' }),
+  )
+  await writeFile(
+    inputFile,
+    `
+export interface FeatureOptions {
+  /** Enables the feature. */
+  enabled: boolean
+}
+`,
+  )
+
+  const { stdout } = await execFile(
+    process.execPath,
+    ['--experimental-strip-types', join(process.cwd(), 'src/index.ts'), inputFile],
+    { cwd: project, env: humanCliEnv(home) },
+  )
+
+  expect(stdout).not.toContain('/** Enables the feature. */')
+  expect(stdout).toContain('**Properties**')
+})
+
+test('ignores ~/.config/exports-md.json for agent callers', async () => {
+  const project = await createProject()
+  const home = await createProject()
+  const inputFile = join(project, 'api.d.ts')
+
+  await mkdir(join(home, '.config'), { recursive: true })
+  await writeFile(
+    join(home, '.config', 'exports-md.json'),
+    JSON.stringify({ propertyDocs: 'list' }),
+  )
+  await writeFile(
+    inputFile,
+    `
+export interface FeatureOptions {
+  /** Enables the feature. */
+  enabled: boolean
+}
+`,
+  )
+
+  const { stdout } = await execFile(
+    process.execPath,
+    ['--experimental-strip-types', join(process.cwd(), 'src/index.ts'), inputFile],
+    { cwd: project, env: { ...humanCliEnv(home), AI_AGENT: 'test-agent' } },
+  )
+
+  expect(stdout).toContain('/** Enables the feature. */')
+  expect(stdout).not.toContain('**Properties**')
+})
+
 test('groups same-module exports from the CLI when requested', async () => {
   const project = await createProject()
   const inputFile = join(project, 'api.ts')
@@ -1666,6 +1726,33 @@ test('uses TypeScript from the nearest node_modules under the current working di
     inputFile,
   })
 })
+
+function humanCliEnv(home: string) {
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home }
+  for (const key of [
+    'AI_AGENT',
+    'ANTIGRAVITY_AGENT',
+    'AUGMENT_AGENT',
+    'CLAUDECODE',
+    'CLAUDE_CODE',
+    'CLAUDE_CODE_IS_COWORK',
+    'CODEX_CI',
+    'CODEX_SANDBOX',
+    'CODEX_THREAD_ID',
+    'COPILOT_ALLOW_ALL',
+    'COPILOT_GITHUB_TOKEN',
+    'COPILOT_MODEL',
+    'CURSOR_AGENT',
+    'CURSOR_EXTENSION_HOST_ROLE',
+    'CURSOR_TRACE_ID',
+    'GEMINI_CLI',
+    'OPENCODE_CLIENT',
+    'REPL_ID',
+  ]) {
+    delete env[key]
+  }
+  return env
+}
 
 async function createProject() {
   const project = await mkdtemp(join(tmpdir(), 'exports-md-'))

@@ -62,6 +62,25 @@ Write the Markdown to a file with normal shell redirection:
 exports-md src/index.ts -- generateMarkdownForModule > src/index.md
 ```
 
+When invoked by a person, command defaults can be customized in `~/.config/exports-md.json`:
+
+```json
+{
+  "follow": true,
+  "github": {
+    "repository": "aleclarson/exports-md",
+    "searchLinks": true
+  },
+  "propertyDocs": "list",
+  "sortByName": true
+}
+```
+
+The config accepts the long option names shown by `exports-md --help`; `github.repository`
+and `github.searchLinks` are nested under `github`. Explicit command-line options override the
+configured defaults. The config is ignored when `@vercel/detect-agent` identifies an agent caller,
+keeping agent output deterministic.
+
 Print documentation for every declaration entry point in a package export map:
 
 ```sh
