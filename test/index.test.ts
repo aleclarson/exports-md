@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -1193,6 +1193,35 @@ export interface FeatureOptions {
 
   expect(stdout).toContain('/** Enables the feature. */')
   expect(stdout).not.toContain('**Properties**')
+})
+
+test('pipes generated Markdown to another CLI command', async () => {
+  const project = await createProject()
+  const inputFile = join(project, 'api.d.ts')
+  const pipeCommand = join(project, 'uppercase-markdown')
+
+  await writeFile(inputFile, 'export declare const answer: 42\n')
+  await writeFile(
+    pipeCommand,
+    '#!/bin/sh\ntr "[:lower:]" "[:upper:]"\n',
+  )
+  await chmod(pipeCommand, 0o755)
+
+  const { stdout } = await execFile(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      join(process.cwd(), 'src/index.ts'),
+      inputFile,
+      '--pipe',
+      pipeCommand,
+    ],
+    { cwd: project },
+  )
+
+  expect(stdout).toContain('# API.D.TS')
+  expect(stdout).toContain('EXPORT CONST ANSWER: 42')
+  expect(stdout).not.toContain('# api.d.ts')
 })
 
 test('groups same-module exports from the CLI when requested', async () => {

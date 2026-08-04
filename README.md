@@ -62,6 +62,13 @@ Write the Markdown to a file with normal shell redirection:
 exports-md src/index.ts -- generateMarkdownForModule > src/index.md
 ```
 
+Pipe the Markdown through another CLI command, such as
+[Glow](https://github.com/charmbracelet/glow):
+
+```sh
+exports-md src/index.ts --pipe glow
+```
+
 When invoked by a person, command defaults can be customized in `~/.config/exports-md.json`:
 
 ```json
@@ -72,6 +79,7 @@ When invoked by a person, command defaults can be customized in `~/.config/expor
     "searchLinks": true
   },
   "propertyDocs": "list",
+  "pipe": "glow",
   "sortByName": true
 }
 ```

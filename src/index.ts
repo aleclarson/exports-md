@@ -12,6 +12,7 @@ import {
   type Type,
 } from 'cmd-ts'
 import { determineAgent } from '@vercel/detect-agent'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -160,6 +161,7 @@ interface CliConfig {
   github?: GitHubOptions
   groupBySyntax?: boolean
   outDir?: string
+  pipe?: string
   propertyDocs?: PropertyDocMode
   reverseSymbols?: boolean
   sortByName?: boolean
@@ -213,6 +215,7 @@ async function loadCliConfig(): Promise<CliConfig> {
     'github',
     'groupBySyntax',
     'outDir',
+    'pipe',
     'propertyDocs',
     'reverseSymbols',
     'sortByName',
@@ -233,6 +236,9 @@ async function loadCliConfig(): Promise<CliConfig> {
   ])
   if (value.outDir !== undefined && typeof value.outDir !== 'string') {
     throw new Error(`Invalid config in ${configFile}: "outDir" must be a string.`)
+  }
+  if (value.pipe !== undefined && typeof value.pipe !== 'string') {
+    throw new Error(`Invalid config in ${configFile}: "pipe" must be a string.`)
   }
   if (
     value.propertyDocs !== undefined &&
@@ -2292,6 +2298,31 @@ function splitCliInputsAndSymbols(values: readonly string[]): CliInputsAndSymbol
   }
 }
 
+async function pipeMarkdown(command: string, markdown: string) {
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(command, [], { stdio: ['pipe', 'inherit', 'inherit'] })
+
+    child.once('error', reject)
+    child.stdin.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EPIPE') reject(error)
+    })
+    child.once('close', (code, signal) => {
+      if (code === 0) {
+        resolvePromise()
+      } else {
+        reject(
+          new Error(
+            signal
+              ? `${command} terminated with signal ${signal}.`
+              : `${command} exited with status ${code}.`,
+          ),
+        )
+      }
+    })
+    child.stdin.end(markdown)
+  })
+}
+
 const app = command({
   name: 'exports-md',
   description: 'Print Markdown docs for TypeScript module or package exports.',
@@ -2301,6 +2332,11 @@ const app = command({
       long: 'outDir',
       short: 'o',
       description: 'Write package entry Markdown files to this directory.',
+    }),
+    pipe: option({
+      type: withCliConfigDefault(optional(string), (config) => config.pipe),
+      long: 'pipe',
+      description: 'Pipe generated Markdown to this CLI command.',
     }),
     follow: flag({
       type: withCliConfigDefault(boolean, (config) => config.follow ?? false),
@@ -2368,12 +2404,17 @@ const app = command({
     githubRepository,
     githubSearchLinks,
     outDir,
+    pipe,
     propertyDocs,
     query,
     reverseSymbols,
     groupBySyntax,
     sortByName,
   }) {
+    if (outDir && pipe) {
+      throw new Error('--pipe cannot be used with --outDir.')
+    }
+
     const result = await generateMarkdownForInputs(query.inputs, {
       followImports: follow || followImports || undefined,
       followReExports: follow || followReExports || undefined,
@@ -2388,7 +2429,9 @@ const app = command({
       sortByName,
       symbols: query.symbols,
     })
-    if (!outDir) {
+    if (pipe) {
+      await pipeMarkdown(pipe, result.markdown)
+    } else if (!outDir) {
       process.stdout.write(result.markdown)
     }
   },
