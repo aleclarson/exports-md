@@ -9,10 +9,6 @@ persistent defaults:
 ```json
 {
   "follow": true,
-  "github": {
-    "repository": "aleclarson/exports-md",
-    "searchLinks": true
-  },
   "propertyDocs": "list",
   "pipe": "glow",
   "sortByName": true
@@ -35,8 +31,6 @@ exports-md src/index.ts --propertyDocs inline
 | `follow` | boolean | `false` | Follows relative imports and re-exports. |
 | `followImports` | boolean | `false` | Follows relative imported declarations. |
 | `followReExports` | boolean | `false` | Follows relative re-exported declarations. |
-| `github.repository` | string | unset | Sets the `owner/repo` used in generated links. |
-| `github.searchLinks` | boolean | `false` | Appends a GitHub code-search link to each symbol. |
 | `groupBySyntax` | boolean | `false` | Groups symbols by declaration category. |
 | `propertyDocs` | `inline` or `list` | `inline` | Chooses where property TSDoc is rendered. |
 | `reverseSymbols` | boolean | `false` | Reverses rendered symbol sections. |
