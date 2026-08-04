@@ -10,7 +10,7 @@ import {
   run,
   string,
   type Type,
-} from 'cmd-ts'
+} from '@alloc/cmd-ts'
 import { determineAgent } from '@vercel/detect-agent'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
