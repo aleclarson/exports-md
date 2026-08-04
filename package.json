@@ -22,6 +22,8 @@
   "scripts": {
     "dev": "tsdown --sourcemap --watch",
     "build": "tsdown",
+    "docs:build": "pnpm build && lildocs build ./docs --out ./site",
+    "docs:dev": "lildocs dev ./docs",
     "format": "oxfmt .",
     "lint": "oxlint src",
     "typecheck": "tsc --noEmit && tsc -p test --noEmit",
@@ -35,6 +37,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
+    "lildocs": "^0.1.25",
     "oxfmt": "^0.56.0",
     "oxlint": "^1.71.0",
     "radashi": "^12.9.1",
