@@ -21,10 +21,12 @@ The command writes Markdown to stdout. Redirect it only when the user wants an a
 exports-md path/to/module.ts > path/to/module.md
 ```
 
-Query specific exported symbols with positional names after the module path:
+Query specific exported symbols after the `--` delimiter. Everything before
+`--` is an input path, and everything after it is a symbol filter. The
+delimiter is required even when there is only one input:
 
 ```sh
-exports-md path/to/module.ts ExportA ExportB
+exports-md path/to/module.ts -- ExportA ExportB
 ```
 
 Symbol queries include the requested exports plus local declaration dependencies needed to understand them. Symbol queries are for module inputs, not `package.json` inputs. Imported symbols are represented by their import line unless `--followImports` is used. Module re-exports are represented by their `export ... from` line unless `--followReExports` is used. `--followReExports` also expands bundled patterns that import aliased names from a relative chunk and export those names through a local export list. When following is enabled, only relative imports or re-exports are expanded, while non-relative package references remain reference lines.
