@@ -67,7 +67,7 @@ Render every declaration entry point from a package export map:
 exports-md package.json
 ```
 
-Package output uses H1 headings based on the package name and export subpath, such as `foo` for `.` and `foo/bar` for `./bar`.
+Package output uses H1 headings based on the package name and export subpath, such as `foo` for `.` and `foo/bar` for `./bar`. Wildcard export targets are expanded against package files and use concrete export subpaths.
 
 Package inputs follow relative imports and re-exports to their declarations by default. For module inputs, opt in when imported or re-exported declarations are more useful than the reference statements:
 

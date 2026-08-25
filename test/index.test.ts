@@ -965,6 +965,55 @@ export interface FeatureOptions {
   expect(result.markdown).not.toContain('# foo/package.json')
 })
 
+test('expands wildcard package exports into concrete declaration entry points', async () => {
+  const project = await createProject()
+  const packageJson = join(project, 'package.json')
+
+  await mkdir(join(project, 'dist', 'features', 'nested'), { recursive: true })
+  await writeFile(
+    join(project, 'dist', 'index.d.ts'),
+    '/** Main API. */\nexport declare function createMain(): string\n',
+  )
+  await writeFile(
+    join(project, 'dist', 'features', 'extra.d.ts'),
+    '/** Extra API. */\nexport declare function createExtra(): string\n',
+  )
+  await writeFile(
+    join(project, 'dist', 'features', 'nested', 'deep.d.ts'),
+    '/** Deep API. */\nexport declare function createDeep(): string\n',
+  )
+  await writeFile(
+    packageJson,
+    JSON.stringify(
+      {
+        name: 'foo',
+        exports: {
+          '.': {
+            types: './dist/index.d.ts',
+            default: './dist/index.js',
+          },
+          './*': {
+            types: './dist/*.d.ts',
+            default: './dist/*.js',
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  )
+
+  const result = await generateMarkdownForModule(packageJson, { cwd: project })
+
+  expect(result.markdown).toMatch(/^# foo$/m)
+  expect(result.markdown).toMatch(/^# foo\/index$/m)
+  expect(result.markdown).toMatch(/^# foo\/features\/extra$/m)
+  expect(result.markdown).toMatch(/^# foo\/features\/nested\/deep$/m)
+  expect(result.markdown).toContain('## `createExtra`')
+  expect(result.markdown).toContain('## `createDeep`')
+  expect(result.markdown).not.toContain('*')
+})
+
 test('renders package exports from a directory input', async () => {
   const project = await createProject()
   const packageRoot = join(project, 'packages', 'foo')

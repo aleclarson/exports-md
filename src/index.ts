@@ -14,11 +14,11 @@ import {
 import { determineAgent } from '@vercel/detect-agent'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   CompilerOptions,
   Diagnostic,
@@ -1445,18 +1445,12 @@ function readPackageEntryPoints(packageJsonFile: string, packageJson: { exports?
         continue
       }
       for (const target of entryTargets) {
-        entryPoints.push({
-          exportSubpath: subpath,
-          inputFile: resolvePackageTarget(packageRoot, target),
-        })
+        entryPoints.push(...expandPackageTarget(packageRoot, subpath, target))
       }
     }
   } else {
     for (const target of collectDeclarationTargets(exportsField)) {
-      entryPoints.push({
-        exportSubpath: '.',
-        inputFile: resolvePackageTarget(packageRoot, target),
-      })
+      entryPoints.push(...expandPackageTarget(packageRoot, '.', target))
     }
   }
 
@@ -1535,6 +1529,69 @@ function toDeclarationTarget(target: string) {
   if (target.endsWith('.mjs')) {
     return `${target.slice(0, -'.mjs'.length)}.d.ts`
   }
+}
+
+function expandPackageTarget(
+  packageRoot: string,
+  exportSubpath: string,
+  target: string,
+): PackageEntryPoint[] {
+  const resolvedTarget = resolvePackageTarget(packageRoot, target)
+  if (!target.includes('*')) {
+    return [
+      {
+        exportSubpath,
+        inputFile: resolvedTarget,
+      },
+    ]
+  }
+
+  const targetPattern = target.slice(2)
+  const wildcardIndex = targetPattern.indexOf('*')
+  const staticDirectoryEnd = targetPattern.lastIndexOf('/', wildcardIndex)
+  const staticDirectory =
+    staticDirectoryEnd === -1 ? '' : targetPattern.slice(0, staticDirectoryEnd)
+  const searchRoot = resolve(packageRoot, staticDirectory || '.')
+  const matcher = new RegExp(
+    `^${targetPattern
+      .split('*')
+      .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+      .join('(.*)')}$`,
+  )
+
+  return collectPackageFiles(searchRoot)
+    .map((inputFile) => {
+      const targetFile = relative(packageRoot, inputFile).split(sep).join('/')
+      const match = matcher.exec(targetFile)
+      if (!match) return undefined
+
+      return {
+        exportSubpath: replacePackageExportPattern(exportSubpath, match.slice(1)),
+        inputFile: resolvePackageTarget(packageRoot, `./${targetFile}`),
+      }
+    })
+    .filter((entry): entry is PackageEntryPoint => entry !== undefined)
+}
+
+function collectPackageFiles(directory: string): string[] {
+  if (!isDirectory(directory)) return []
+
+  const files: string[] = []
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...collectPackageFiles(path))
+    } else if (entry.isFile()) {
+      files.push(path)
+    }
+  }
+
+  return files.sort()
+}
+
+function replacePackageExportPattern(exportSubpath: string, captures: readonly string[]) {
+  let captureIndex = 0
+  return exportSubpath.replace(/\*/g, () => captures[captureIndex++] ?? '')
 }
 
 function resolvePackageTarget(packageRoot: string, target: string) {

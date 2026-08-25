@@ -50,7 +50,9 @@ exports-md packages/example
 
 Package inputs follow relative imports and re-exports by default. Entries with
 `types` targets use those declarations; string `.js` or `.mjs` targets are
-rewritten to `.d.ts`. Non-code entries such as `./package.json` are skipped.
+rewritten to `.d.ts`. Wildcard targets are expanded against package files and
+rendered with their concrete export subpaths. Non-code entries such as
+`./package.json` are skipped.
 
 Write each package entry to its own Markdown file when another tool needs a
 directory tree:
