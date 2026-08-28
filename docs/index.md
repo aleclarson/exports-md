@@ -41,4 +41,6 @@ useful for signatures, exported types, TSDoc, and package entry points.
 
 The target project must use Node.js `^22.18.0` or `>=24.2.0` and have TypeScript
 installed in a reachable `node_modules` directory. `exports-md` deliberately
-uses the target project's nearest TypeScript installation.
+uses the target project's nearest TypeScript installation. Published npm
+package inputs also require `npm` on `PATH`; their tarballs are fetched into a
+temporary directory and are not installed into the target project.

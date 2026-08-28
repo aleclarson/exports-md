@@ -14,8 +14,21 @@ exports-md [...input] [options] -- [...symbol]
 ```
 
 At least one input is required. Inputs can be TypeScript modules, declaration
-files, package manifests, or package directories. Put optional exported symbol
-names after the `--` delimiter.
+files, package manifests, package directories, or npm registry package specs.
+Existing local paths are used first; a missing package-like input is fetched
+with npm. Put optional exported symbol names after the `--` delimiter.
+
+For example, inspect several published packages without installing them into
+the current project:
+
+```bash
+exports-md qubu@0.4.2 @qubu/adapter-libsql@0.4.2 @qubu/better-auth@0.4.2 --follow
+```
+
+Remote inputs require `npm` on `PATH`. They are unpacked in a temporary
+directory, and their dependencies are not installed. `--follow` follows only
+relative declarations inside each fetched package; non-relative package
+imports remain reference lines.
 
 ## Options
 
@@ -56,6 +69,8 @@ package output but cannot be combined with `--outDir`.
 | --- | --- | --- |
 | `At least one input is required.` | No module, manifest, or directory was provided. | Add an input before any options or `--`. |
 | `Module not found` | The resolved module path does not exist. | Check the working directory and input path. |
+| `Could not fetch npm package` | npm could not resolve or download a registry package spec, or npm is unavailable. | Check the package spec, registry access, and that `npm` is on `PATH`. |
+| `Fetched npm package ... has no package.json.` | The downloaded archive is not a package archive. | Verify the package source and version. |
 | `Could not find node_modules/typescript` | No TypeScript installation is reachable from the working directory. | Install TypeScript in the target workspace or run from the intended project. |
 | TypeScript diagnostics | Declaration emit failed. | Fix the reported type or configuration errors before retrying. |
 | `Export not found` | A requested symbol is not exported under that name. | Check the public export name or omit the symbol filter. |

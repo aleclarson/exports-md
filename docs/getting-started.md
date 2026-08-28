@@ -49,8 +49,10 @@ exports-md packages/example
 ```
 
 Package inputs follow relative imports and re-exports by default. Entries with
-`types` targets use those declarations; string `.js` or `.mjs` targets are
-rewritten to `.d.ts`. Wildcard targets are expanded against package files and
+`types` targets use those declarations; string `.js`, `.mjs`, or `.cjs` targets
+are rewritten to the matching declaration extension. A top-level `types` or
+`typings` field supplies the root declaration when the export map has no
+`types` condition. Wildcard targets are expanded against package files and
 rendered with their concrete export subpaths. Non-code entries such as
 `./package.json` are skipped.
 
@@ -63,6 +65,22 @@ exports-md package.json --outDir docs/api
 
 After the command finishes, `docs/api` preserves the entry-point folder
 structure relative to the entries' shared root.
+
+## Inspect A Published Package
+
+Use an npm package name with an optional version, tag, or version range when
+the package is not installed in the current project:
+
+```bash
+exports-md qubu@0.4.2 @qubu/adapter-libsql@0.4.2 --follow
+```
+
+`exports-md` fetches each package tarball with npm, extracts it temporarily,
+and removes the temporary files after rendering. It does not add packages,
+dependencies, or lockfiles to the current project. `--follow` expands relative
+declarations inside the fetched package; imports from other packages remain
+reference lines. The current project still needs a reachable
+`node_modules/typescript` installation.
 
 ## Next Steps
 

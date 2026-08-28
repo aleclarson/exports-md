@@ -33,7 +33,8 @@
   },
   "dependencies": {
     "@alloc/cmd-ts": "^0.17.1",
-    "@vercel/detect-agent": "^1.2.3"
+    "@vercel/detect-agent": "^1.2.3",
+    "tar": "^7.5.22"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

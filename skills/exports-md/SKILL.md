@@ -5,7 +5,7 @@ description: Use when a task needs the exported API surface of a TypeScript modu
 
 # exports-md
 
-Use `exports-md` to get Markdown documentation for a TypeScript module's exported API, or every declaration entry point in a package export map, from declaration emit instead of source implementation.
+Use `exports-md` to get Markdown documentation for a TypeScript module's exported API, every declaration entry point in a package export map, or a published npm package, from declaration emit instead of source implementation.
 
 ## Core Contract
 
@@ -14,6 +14,18 @@ Run from the project context whose nearest `node_modules/typescript` should be u
 ```sh
 exports-md path/to/module.ts
 ```
+
+Inspect published npm packages without installing them into the current
+project:
+
+```sh
+exports-md package@1.2.3 @scope/adapter@1.2.3 --follow
+```
+
+Local files and directories take precedence. A missing package-like input is
+fetched with npm into a temporary directory, and the temporary package is
+removed after rendering. Package dependencies are not installed, and `npm`
+must be available on `PATH`.
 
 The command writes Markdown to stdout. Redirect it only when the user wants an artifact:
 
@@ -29,7 +41,7 @@ delimiter is required even when there is only one input:
 exports-md path/to/module.ts -- ExportA ExportB
 ```
 
-Symbol queries include the requested exports plus local declaration dependencies needed to understand them. Symbol queries are for module inputs, not `package.json` inputs. Imported symbols are represented by their import line unless `--followImports` is used. Module re-exports are represented by their `export ... from` line unless `--followReExports` is used. `--followReExports` also expands bundled patterns that import aliased names from a relative chunk and export those names through a local export list. When following is enabled, only relative imports or re-exports are expanded, while non-relative package references remain reference lines.
+Symbol queries include the requested exports plus local declaration dependencies needed to understand them. They work for module inputs and package inputs, with package results checked across their declaration entry points. Imported symbols are represented by their import line unless `--followImports` is used. Module re-exports are represented by their `export ... from` line unless `--followReExports` is used. `--followReExports` also expands bundled patterns that import aliased names from a relative chunk and export those names through a local export list. When following is enabled, only relative imports or re-exports are expanded, while non-relative package references remain reference lines.
 
 Follow relative imported declarations when imported API shape is more useful than import reference lines:
 
@@ -69,6 +81,12 @@ exports-md package.json
 
 Package output uses H1 headings based on the package name and export subpath, such as `foo` for `.` and `foo/bar` for `./bar`. Wildcard export targets are expanded against package files and use concrete export subpaths.
 
+Package manifests may be local paths or fetched npm package specs. Fetched
+packages use their published files and export metadata, including a top-level
+`types` or `typings` field for the root declaration when no export-map `types`
+condition exists. `--follow` expands only relative files within the fetched
+package; it never installs or recursively fetches package dependencies.
+
 Package inputs follow relative imports and re-exports to their declarations by default. For module inputs, opt in when imported or re-exported declarations are more useful than the reference statements:
 
 ```sh
@@ -95,6 +113,7 @@ exports-md package.json --outDir docs/api
 If the command fails, inspect the error before falling back:
 
 - Missing local TypeScript install means the target project needs `node_modules/typescript` reachable from the working directory.
+- Missing npm or an unresolved package spec means the remote package could not be fetched; check npm availability, registry access, and the package name/version.
 - TypeScript diagnostics mean declaration emit failed; fix or report the compile issue rather than treating partial output as authoritative.
 - `Export not found` means the requested symbol is not exported by that module under that name.
-- Package export-map entries need `types` targets or string `.js`/`.mjs` targets that can be rewritten to `.d.ts`.
+- Package export-map entries need declaration targets, top-level `types`/`typings` for the root, or string `.js`/`.mjs`/`.cjs` targets that can be rewritten to declarations.

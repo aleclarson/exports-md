@@ -2,7 +2,7 @@ import { execFile as execFileCallback } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { findNearestTypescript, generateMarkdownForModule } from '../src/index'
 
@@ -1047,6 +1047,93 @@ export declare function createMain(): string
 
   expect(stdout).toMatch(/^# foo$/m)
   expect(stdout).toContain('## `createMain`')
+})
+
+test('renders npm package specs without installing them', async () => {
+  const project = await createProject()
+  const fixture = join(project, 'fixture')
+  const archiveDir = join(project, 'archive')
+
+  await mkdir(join(fixture, 'dist'), { recursive: true })
+  await writeFile(join(fixture, 'dist', 'index.d.mts'), "export { createThing } from './api.mjs'\n")
+  await writeFile(
+    join(fixture, 'dist', 'api.d.mts'),
+    '/** Creates a thing. */\nexport declare function createThing(): string\n',
+  )
+  await writeFile(
+    join(fixture, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'fixture-package',
+        version: '1.0.0',
+        type: 'module',
+        types: './dist/index.d.mts',
+        exports: {
+          '.': './dist/index.mjs',
+        },
+      },
+      null,
+      2,
+    ),
+  )
+  await mkdir(archiveDir)
+
+  const { stdout: archiveName } = await execFile(
+    'npm',
+    ['pack', '--silent', '--ignore-scripts', '--pack-destination', archiveDir],
+    { cwd: fixture },
+  )
+  const archiveFile = join(archiveDir, archiveName.trim())
+  const npmBin = join(project, 'npm-bin')
+  const npmShimScript = join(npmBin, 'npm-shim.cjs')
+  const npmShim = join(npmBin, process.platform === 'win32' ? 'npm.cmd' : 'npm')
+  await mkdir(npmBin)
+  await writeFile(
+    npmShimScript,
+    `
+const { copyFileSync } = require('node:fs')
+const { basename, join } = require('node:path')
+
+const destinationIndex = process.argv.indexOf('--pack-destination')
+const archive = process.env.EXPORTS_MD_TEST_ARCHIVE
+if (destinationIndex === -1 || !archive) process.exit(1)
+
+const output = basename(archive)
+copyFileSync(archive, join(process.argv[destinationIndex + 1], output))
+process.stdout.write(output + '\\n')
+`,
+  )
+  if (process.platform === 'win32') {
+    await writeFile(npmShim, `@echo off\r\n"${process.execPath}" "${npmShimScript}" %*\r\n`)
+  } else {
+    await writeFile(npmShim, `#!/bin/sh\nexec "${process.execPath}" "${npmShimScript}" "$@"\n`)
+    await chmod(npmShim, 0o755)
+  }
+
+  const { stdout } = await execFile(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      join(process.cwd(), 'src/index.ts'),
+      'fixture-package@1.0.0',
+      '--follow',
+    ],
+    {
+      cwd: project,
+      env: {
+        ...process.env,
+        EXPORTS_MD_TEST_ARCHIVE: archiveFile,
+        PATH: `${npmBin}${delimiter}${process.env.PATH ?? ''}`,
+      },
+    },
+  )
+
+  expect(stdout).toMatch(/^# fixture-package$/m)
+  expect(stdout).toContain('## `createThing`')
+  expect(stdout).toContain('Creates a thing.')
+  expect(stdout).not.toContain("export { createThing } from './api.mjs';")
+  expect(existsSync(join(project, 'node_modules', 'fixture-package'))).toBe(false)
+  expect(existsSync(join(project, 'package-lock.json'))).toBe(false)
 })
 
 test('fails clearly when a directory input has no package manifest', async () => {

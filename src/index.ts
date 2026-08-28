@@ -12,13 +12,15 @@ import {
   type Type,
 } from '@alloc/cmd-ts'
 import { determineAgent } from '@vercel/detect-agent'
-import { spawn } from 'node:child_process'
+import { execFile as execFileCallback, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { promisify } from 'node:util'
+import { extract as extractTar } from 'tar'
 import type {
   CompilerOptions,
   Diagnostic,
@@ -29,8 +31,9 @@ import type {
 } from 'typescript'
 
 type TypeScript = typeof import('typescript')
-const cacheVersion = 7
+const cacheVersion = 8
 const packageVersion = '0.0.0'
+const execFile = promisify(execFileCallback)
 export type PropertyDocMode = 'inline' | 'list'
 
 const propertyDocModes = ['inline', 'list'] as const satisfies readonly PropertyDocMode[]
@@ -126,6 +129,18 @@ interface PackageMarkdownEntry {
 interface PackageEntryPoint {
   exportSubpath: string
   inputFile: string
+}
+
+interface PackageJson {
+  exports?: unknown
+  name?: unknown
+  types?: unknown
+  typings?: unknown
+}
+
+interface TemporaryNpmPackage {
+  packageJsonFile: string
+  tempDir: string
 }
 
 interface PropertyDoc {
@@ -293,6 +308,11 @@ async function generateMarkdownForInput(
 ): Promise<GeneratedMarkdown & { foundSymbols: Set<string> }> {
   const cwd = resolve(options.cwd ?? process.cwd())
   const inputPath = resolve(cwd, modulePath)
+
+  if (!isFile(inputPath) && !isDirectory(inputPath) && isNpmPackageSpec(modulePath)) {
+    return generateMarkdownForNpmPackage(modulePath, cwd, options, allowMissingSymbols)
+  }
+
   const inputFile = isDirectory(inputPath) ? join(inputPath, 'package.json') : inputPath
   const symbols = normalizeSymbols(options.symbols ?? [])
   const followImports = options.followImports ?? isPackageJson(inputFile)
@@ -403,6 +423,93 @@ export function findNearestTypescript(startDir = process.cwd()) {
     }
     dir = parent
   }
+}
+
+async function generateMarkdownForNpmPackage(
+  packageSpec: string,
+  cwd: string,
+  options: GenerateMarkdownOptions,
+  allowMissingSymbols: boolean,
+) {
+  const temporaryPackage = await fetchNpmPackage(packageSpec, cwd)
+
+  try {
+    const result = await generateMarkdownForInput(
+      temporaryPackage.packageJsonFile,
+      options,
+      allowMissingSymbols,
+    )
+
+    // The extracted path is temporary, so expose the stable input the caller provided.
+    return { ...result, inputFile: packageSpec }
+  } finally {
+    await rm(temporaryPackage.tempDir, { recursive: true, force: true })
+  }
+}
+
+async function fetchNpmPackage(packageSpec: string, cwd: string): Promise<TemporaryNpmPackage> {
+  const tempDir = await mkdtemp(join(tmpdir(), 'exports-md-package-'))
+
+  try {
+    const archiveDir = join(tempDir, 'archive')
+    const packageRoot = join(tempDir, 'package')
+    mkdirSync(archiveDir)
+    mkdirSync(packageRoot)
+    const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+    try {
+      await execFile(
+        npmCommand,
+        ['pack', '--silent', '--ignore-scripts', '--pack-destination', archiveDir, packageSpec],
+        { cwd, maxBuffer: 1024 * 1024 },
+      )
+    } catch (error) {
+      const stderr =
+        error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string'
+          ? error.stderr.trim()
+          : ''
+      const detail = stderr || (error instanceof Error ? error.message : String(error))
+      throw new Error(`Could not fetch npm package ${packageSpec}: ${detail}`)
+    }
+
+    const archives = readdirSync(archiveDir).filter((file) => file.endsWith('.tgz'))
+    if (archives.length !== 1) {
+      throw new Error(`Could not fetch npm package ${packageSpec}: npm pack produced no tarball.`)
+    }
+
+    await extractTar({
+      cwd: packageRoot,
+      file: join(archiveDir, archives[0]!),
+      preserveOwner: false,
+      strip: 1,
+      strict: true,
+    })
+
+    const packageJsonFile = join(packageRoot, 'package.json')
+    if (!isFile(packageJsonFile)) {
+      throw new Error(`Fetched npm package ${packageSpec} has no package.json.`)
+    }
+
+    return { packageJsonFile, tempDir }
+  } catch (error) {
+    await rm(tempDir, { recursive: true, force: true })
+    throw error
+  }
+}
+
+function isNpmPackageSpec(value: string) {
+  if (
+    value.length === 0 ||
+    value.startsWith('.') ||
+    value.startsWith('/') ||
+    value.includes('\\') ||
+    ['.cjs', '.cts', '.js', '.json', '.mjs', '.mts', '.ts', '.tsx'].includes(extname(value))
+  ) {
+    return false
+  }
+
+  return /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)(?:@[^/\\:]+)?$/i.test(
+    value,
+  )
 }
 
 async function generateMarkdownForPackage(
@@ -1428,19 +1535,29 @@ function isNamespaceReExport(ts: TypeScript, entry: ReExportEntry) {
   return clause ? ts.isNamespaceExport(clause) : false
 }
 
-function readPackageEntryPoints(packageJsonFile: string, packageJson: { exports?: unknown }) {
+function readPackageEntryPoints(packageJsonFile: string, packageJson: PackageJson) {
   const packageRoot = dirname(packageJsonFile)
   const exportsField = packageJson.exports
 
   if (exportsField === undefined) {
-    throw new Error(`Package exports not found: ${packageJsonFile}`)
+    const packageTypesTarget = getPackageTypesTarget(packageJson)
+    if (!packageTypesTarget) {
+      throw new Error(`Package exports not found: ${packageJsonFile}`)
+    }
+
+    return [
+      {
+        exportSubpath: '.',
+        inputFile: resolvePackageTypesTarget(packageRoot, packageTypesTarget),
+      },
+    ]
   }
 
   const entryPoints: PackageEntryPoint[] = []
 
   if (isRecord(exportsField) && Object.keys(exportsField).some((key) => key.startsWith('.'))) {
     for (const [subpath, value] of Object.entries(exportsField)) {
-      const entryTargets = collectDeclarationTargets(value)
+      const entryTargets = collectPackageDeclarationTargets(value, packageJson, subpath)
       if (entryTargets.length === 0) {
         continue
       }
@@ -1449,7 +1566,7 @@ function readPackageEntryPoints(packageJsonFile: string, packageJson: { exports?
       }
     }
   } else {
-    for (const target of collectDeclarationTargets(exportsField)) {
+    for (const target of collectPackageDeclarationTargets(exportsField, packageJson, '.')) {
       entryPoints.push(...expandPackageTarget(packageRoot, '.', target))
     }
   }
@@ -1468,12 +1585,63 @@ function readPackageEntryPoints(packageJsonFile: string, packageJson: { exports?
   return [...uniqueEntryPoints.values()]
 }
 
+function collectPackageDeclarationTargets(
+  value: unknown,
+  packageJson: PackageJson,
+  exportSubpath: string,
+) {
+  const packageTypesTarget = exportSubpath === '.' ? getPackageTypesTarget(packageJson) : undefined
+  const declarationTargets = collectDeclarationTargets(value)
+
+  if (packageTypesTarget && !hasTypesCondition(value) && !hasExplicitDeclarationTarget(value)) {
+    return [packageTypesTarget]
+  }
+
+  return declarationTargets.length > 0
+    ? declarationTargets
+    : packageTypesTarget
+      ? [packageTypesTarget]
+      : []
+}
+
+function getPackageTypesTarget(packageJson: PackageJson) {
+  if (typeof packageJson.types === 'string' && packageJson.types.length > 0) {
+    return packageJson.types
+  }
+
+  if (typeof packageJson.typings === 'string' && packageJson.typings.length > 0) {
+    return packageJson.typings
+  }
+}
+
+function hasTypesCondition(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => hasTypesCondition(item))
+  }
+
+  if (!isRecord(value)) return false
+  if (typeof value.types === 'string') return true
+
+  return Object.values(value).some((item) => hasTypesCondition(item))
+}
+
+function hasExplicitDeclarationTarget(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return isDeclarationFile(value) || ['.ts', '.mts', '.cts', '.tsx'].includes(extname(value))
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasExplicitDeclarationTarget(item))
+  }
+
+  if (!isRecord(value)) return false
+
+  return Object.values(value).some((item) => hasExplicitDeclarationTarget(item))
+}
+
 async function readPackageJson(packageJsonFile: string) {
   try {
-    return JSON.parse(await readFile(packageJsonFile, 'utf8')) as {
-      exports?: unknown
-      name?: unknown
-    }
+    return JSON.parse(await readFile(packageJsonFile, 'utf8')) as PackageJson
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new Error(`Invalid package.json: ${packageJsonFile}`)
@@ -1527,7 +1695,11 @@ function toDeclarationTarget(target: string) {
   }
 
   if (target.endsWith('.mjs')) {
-    return `${target.slice(0, -'.mjs'.length)}.d.ts`
+    return `${target.slice(0, -'.mjs'.length)}.d.mts`
+  }
+
+  if (target.endsWith('.cjs')) {
+    return `${target.slice(0, -'.cjs'.length)}.d.cts`
   }
 }
 
@@ -1536,16 +1708,49 @@ function expandPackageTarget(
   exportSubpath: string,
   target: string,
 ): PackageEntryPoint[] {
-  const resolvedTarget = resolvePackageTarget(packageRoot, target)
-  if (!target.includes('*')) {
-    return [
-      {
-        exportSubpath,
-        inputFile: resolvedTarget,
-      },
-    ]
+  const candidateTargets = getPackageTargetCandidates(target)
+
+  for (const [index, candidateTarget] of candidateTargets.entries()) {
+    const resolvedTarget = resolvePackageTarget(packageRoot, candidateTarget)
+    if (!candidateTarget.includes('*')) {
+      if (isFile(resolvedTarget) || index === candidateTargets.length - 1) {
+        return [
+          {
+            exportSubpath,
+            inputFile: resolvedTarget,
+          },
+        ]
+      }
+
+      continue
+    }
+
+    const entryPoints = expandPackageTargetPattern(packageRoot, exportSubpath, candidateTarget)
+    if (entryPoints.length > 0 || index === candidateTargets.length - 1) {
+      return entryPoints
+    }
   }
 
+  return []
+}
+
+function getPackageTargetCandidates(target: string) {
+  if (target.endsWith('.d.mts')) {
+    return [target, `${target.slice(0, -'.d.mts'.length)}.d.ts`]
+  }
+
+  if (target.endsWith('.d.cts')) {
+    return [target, `${target.slice(0, -'.d.cts'.length)}.d.ts`]
+  }
+
+  return [target]
+}
+
+function expandPackageTargetPattern(
+  packageRoot: string,
+  exportSubpath: string,
+  target: string,
+): PackageEntryPoint[] {
   const targetPattern = target.slice(2)
   const wildcardIndex = targetPattern.indexOf('*')
   const staticDirectoryEnd = targetPattern.lastIndexOf('/', wildcardIndex)
@@ -1599,7 +1804,16 @@ function resolvePackageTarget(packageRoot: string, target: string) {
     throw new Error(`Package export target must be relative to the package root: ${target}`)
   }
 
-  return resolve(packageRoot, target)
+  const resolvedTarget = resolve(packageRoot, target)
+  if (!isSameOrChildPath(packageRoot, resolvedTarget)) {
+    throw new Error(`Package export target must stay within the package root: ${target}`)
+  }
+
+  return resolvedTarget
+}
+
+function resolvePackageTypesTarget(packageRoot: string, target: string) {
+  return resolvePackageTarget(packageRoot, target.startsWith('./') ? target : `./${target}`)
 }
 
 async function writePackageMarkdownFiles(entries: PackageMarkdownEntry[], outDir: string) {
