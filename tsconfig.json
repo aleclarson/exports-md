@@ -4,6 +4,7 @@
     "strict": true,
     "erasableSyntaxOnly": true,
     "noUncheckedSideEffectImports": true,
+    "allowImportingTsExtensions": true,
     "lib": ["esnext"],
     "target": "esnext",
     "module": "esnext",

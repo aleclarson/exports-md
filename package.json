@@ -9,7 +9,7 @@
     "url": "https://github.com/aleclarson/exports-md.git"
   },
   "bin": {
-    "exports-md": "./dist/index.mjs"
+    "exports-md": "./dist/cli.mjs"
   },
   "files": [
     "dist"
