@@ -1,46 +1,58 @@
 # exports-md
 
-> Inspect the public API of a TypeScript module or package as compact Markdown
-> without loading its implementation.
+> Get a TypeScript module's exported functions, types, and documentation comments
+> together as Markdown.
 
-`exports-md` compiles a target with the nearest installed TypeScript version and
-renders exported declarations, TSDoc, and relevant import or re-export context.
-The result is designed for agents and people who need API shape rather than
-implementation details.
+When you need to use an unfamiliar module, you may only need to know what you
+can import, which arguments a function accepts, and what it returns. Reading
+its implementation can mean working through details that do not answer those
+questions.
 
-```bash
-exports-md src/index.ts
+`exports-md` extracts that information into a document you can read, save, or
+pass to a coding agent. It describes the **public API**: the functions, classes,
+values, and types the module exports for other code to use.
+
+For example, a function with a body becomes a declaration with its documentation:
+
+```ts
+/** Build a greeting for a display name. */
+export function greet(name: string): string
 ```
 
-The command prints Markdown to standard output. It does not create a file unless
-you use shell redirection, choose `--outDir` for a package, or pipe the result to
-another command.
+The generated Markdown gives each export a heading and includes any existing
+TSDoc comments (documentation comments written above declarations). It does not
+write missing explanations for you.
 
-## Choose A Workflow
+[Try the complete example](getting-started.md) to see the source, command, and
+actual Markdown output.
 
-- [Get started](getting-started.md) with installation, module inspection, and
-  package inspection.
-- [Choose what to include](guides/select-output.md) when you need particular
-  symbols, followed declarations, sorting, or property documentation.
-- [Set human defaults](guides/human-defaults.md) without changing deterministic
-  behavior for agent callers.
-- Use the [command-line reference](reference/cli.md) to look up every argument,
-  option, conflict, and failure mode.
-- Browse the generated API reference for the package's JavaScript exports.
+## Is This Useful For You?
 
-## What The Output Proves
+Consider it when you want a Markdown view of a module's exports, a shareable
+API excerpt, or type and documentation context for a coding agent. You can
+inspect your own files or published npm packages.
 
-The generated Markdown describes the emitted public declaration surface. It is
-useful for signatures, exported types, TSDoc, and package entry points.
+If your editor's type hints or the package's documentation already answer your
+question, you may not need another tool. TypeScript declaration files (`.d.ts`)
+also describe APIs directly; this tool arranges declarations and comments into
+Markdown sections and lets you select particular exports.
 
-> [!IMPORTANT]
-> Declaration output does not prove runtime behavior, side effects, or internal
-> invariants. Read source and tests when those details affect a decision.
+For runtime behavior, side effects, or why something fails, read source and
+tests. Signatures tell you what arguments and results are typed as, but do not
+prove what the implementation does.
 
-## Requirements
+## Where To Start
 
-The target project must use Node.js `^22.18.0` or `>=24.2.0` and have TypeScript
-installed in a reachable `node_modules` directory. `exports-md` deliberately
-uses the target project's nearest TypeScript installation. Published npm
-package inputs also require `npm` on `PATH`; their tarballs are fetched into a
-temporary directory and are not installed into the target project.
+Start with [Getting started](getting-started.md) for installation and one
+complete example. You will need a supported Node.js version and a project with
+TypeScript installed; the guide lists the requirements.
+
+After trying it:
+
+- [Inspect packages](guides/inspect-packages.md) for local or published packages.
+- [Choose output](guides/select-output.md) to select exports or adjust formatting.
+- Use the [CLI reference](reference/cli.md) for exact options and troubleshooting.
+
+[Personal defaults](guides/human-defaults.md) are optional settings for repeated
+interactive use. The generated API reference documents the JavaScript exports
+for callers integrating the library into their own code.

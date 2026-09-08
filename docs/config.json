@@ -5,6 +5,13 @@
     "packageJson": "../package.json"
   },
   "navigation": {
-    "order": ["getting-started.md", "guides/", "reference/"]
+    "order": [
+      "getting-started.md",
+      "guides/inspect-packages.md",
+      "guides/select-output.md",
+      "guides/human-defaults.md",
+      "guides/",
+      "reference/"
+    ]
   }
 }

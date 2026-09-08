@@ -1,89 +1,75 @@
 # Getting Started
 
-> Install the command, inspect one public API, and verify the Markdown before
-> choosing more detailed output controls.
+> Turn one TypeScript function into Markdown you can read, save, or share with
+> a coding agent.
 
 ## Install
 
-Add `exports-md` to the TypeScript project whose API you want to inspect:
+From a TypeScript project, install the command:
 
 ```bash
-pnpm add exports-md
+pnpm add -D exports-md
 ```
 
-The target project also needs its own TypeScript installation. The command walks
-upward from the current working directory and uses the nearest
-`node_modules/typescript`.
+You need Node.js `^22.18.0` or `>=24.2.0` and TypeScript installed in the
+project or a parent workspace. If TypeScript is not installed, run
+`pnpm add -D typescript` too. Run the commands below from that project directory.
 
-## Inspect A Module
+## Try One File
 
-Run the command from the target project and pass a TypeScript source or
-declaration file:
+Suppose you want to know how to call a function without reading its body.
+Create a file named `greet.ts` with this content:
+
+```ts
+/** Build a greeting for a display name. */
+export function greet(name: string): string {
+  return `Hello, ${name}!`
+}
+```
+
+Print its exported function as Markdown:
 
 ```bash
-exports-md src/index.ts
+pnpm exec exports-md greet.ts
 ```
 
-The Markdown is written to standard output. A successful result starts with a
-heading for the input and contains a section for each exported symbol.
+The terminal output is:
 
-Write that result to a file only when you need an artifact:
+    # greet.ts
+
+    ## `greet`
+
+    Build a greeting for a display name.
+
+    ```ts
+    export function greet(name: string): string
+    ```
+
+
+The output keeps the documentation comment, parameter type, and return type.
+It leaves out the function body. You can see how to call `greet`, but the output
+alone does not tell you which greeting text it returns.
+
+Seeing this output confirms the command is working. Now replace `greet.ts`
+with a file from your project, such as `src/index.ts`.
+
+## Save The Result
+
+The command prints to the terminal by default. To save Markdown for another
+reader or tool, redirect it to a file:
 
 ```bash
-exports-md src/index.ts > src/index.md
+pnpm exec exports-md greet.ts > greet-api.md
 ```
 
-## Inspect A Package
+This writes `greet-api.md`, replacing that file if it already exists. You can
+read it in a Markdown viewer or supply it as API context to a coding agent.
 
-Pass a package manifest to render every supported entry in its `exports` map:
+## Go Further When Needed
 
-```bash
-exports-md package.json
-```
+- [Inspect packages](guides/inspect-packages.md) to read a local or published
+  package across its supported import paths.
+- [Choose output](guides/select-output.md) if you only need certain exports
+  or want to change the presentation.
 
-A package directory is shorthand for its manifest:
-
-```bash
-exports-md .
-exports-md packages/example
-```
-
-Package inputs follow relative imports and re-exports by default. Entries with
-`types` targets use those declarations; string `.js`, `.mjs`, or `.cjs` targets
-are rewritten to the matching declaration extension. A top-level `types` or
-`typings` field supplies the root declaration when the export map has no
-`types` condition. Wildcard targets are expanded against package files and
-rendered with their concrete export subpaths. Non-code entries such as
-`./package.json` are skipped.
-
-Write each package entry to its own Markdown file when another tool needs a
-directory tree:
-
-```bash
-exports-md package.json --outDir docs/api
-```
-
-After the command finishes, `docs/api` preserves the entry-point folder
-structure relative to the entries' shared root.
-
-## Inspect A Published Package
-
-Use an npm package name with an optional version, tag, or version range when
-the package is not installed in the current project:
-
-```bash
-exports-md qubu@0.4.2 @qubu/adapter-libsql@0.4.2 --follow
-```
-
-`exports-md` fetches each package tarball with npm, extracts it temporarily,
-and removes the temporary files after rendering. It does not add packages,
-dependencies, or lockfiles to the current project. `--follow` expands relative
-declarations inside the fetched package; imports from other packages remain
-reference lines. The current project still needs a reachable
-`node_modules/typescript` installation.
-
-## Next Steps
-
-Read [Choose Output](guides/select-output.md) to focus or reorganize the result.
-Use [Human Defaults](guides/human-defaults.md) when interactive invocations
-should consistently use the same options.
+For option lookup, use the [CLI reference](reference/cli.md).
