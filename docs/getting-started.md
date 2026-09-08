@@ -42,7 +42,7 @@ The terminal output is:
     Build a greeting for a display name.
 
     ```ts
-    export function greet(name: string): string
+    export function greet(name: string): string;
     ```
 
 
