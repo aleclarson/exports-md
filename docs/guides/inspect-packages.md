@@ -16,26 +16,41 @@ To inspect a local package, run from its project directory. Pass its
 pnpm exec exports-md package.json
 ```
 
-A package directory is shorthand for its manifest:
+A package can expose several import paths, called entry points. For example,
+`foo` and `foo/extra` let callers import different parts of one package. The
+output gives each supported entry point its own heading, such as `# foo/extra`,
+followed by sections for its exported functions and types.
 
-```bash
-pnpm exec exports-md .
-pnpm exec exports-md packages/example
-```
+See [package resolution](../reference/cli.md#package-resolution) if an entry is
+missing or you need the exact selection rules.
 
-A package can expose several import paths, called entry points. This prints a
-section for each supported entry point. See [package resolution](../reference/cli.md#package-resolution)
-if an entry is missing or you need the exact selection rules.
+### Save Separate Entry Files
 
-Write each package entry to its own Markdown file when another tool needs a
-directory tree:
+To browse or share each entry as a separate document:
 
 ```bash
 pnpm exec exports-md package.json --outDir docs/api
 ```
 
-After the command finishes, `docs/api` preserves the entry-point folder
-structure relative to the entries' shared root.
+Output paths follow the target files' folder structure relative to their shared
+root. They can differ from the import paths. For example:
+
+| Import path | Declaration file           | Generated file               |
+| ----------- | -------------------------- | ---------------------------- |
+| `foo`       | `dist/index.d.ts`          | `docs/api/index.md`          |
+| `foo/extra` | `dist/features/extra.d.ts` | `docs/api/features/extra.md` |
+
+In this example, open `docs/api/features/extra.md` and check for the heading
+`# foo/extra` and its exports.
+
+### Use A Directory Path
+
+A package directory is shorthand for its `package.json`:
+
+```bash
+pnpm exec exports-md .
+pnpm exec exports-md packages/example
+```
 
 ## Inspect A Published Package
 

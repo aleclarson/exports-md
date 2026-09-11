@@ -2,7 +2,7 @@
 title: CLI Reference
 ---
 
-# Command Line
+# CLI Reference
 
 > Look up command syntax, defaults, side effects, conflicts, and failures for
 > scripts or interactive use.
@@ -40,11 +40,17 @@ in `package.json` describes those paths and their target files.
 
 Package inputs follow relative imports and re-exports by default. Entries with
 `types` targets use those declarations; string `.js`, `.mjs`, or `.cjs` targets
-are rewritten to the matching declaration extension. A top-level `types` or
-`typings` field supplies the root declaration when the export map has no
-`types` condition. Wildcard targets are expanded against package files and
-rendered with their concrete export subpaths. Non-code entries such as
-`./package.json` are skipped.
+are rewritten to the matching declaration extension.
+
+For the root entry, a top-level `types` or `typings` field takes precedence over
+inferred JavaScript declaration targets when the root export has neither a
+`types` condition nor an explicit declaration or TypeScript source target.
+For example, `"exports": "./api.d.ts"` uses `api.d.ts` even if top-level `types`
+names another file. Without an `exports` field, `types` or `typings` supplies
+the root entry.
+
+Wildcard targets are expanded against package files and rendered with their
+concrete export subpaths. Non-code entries such as `./package.json` are skipped.
 
 The command uses the nearest `node_modules/typescript` found by walking upward
 from the current working directory. Published packages require `npm` on `PATH`;
@@ -70,6 +76,16 @@ their tarballs are extracted temporarily and removed after rendering.
 For callers not identified as agents, values from
 `~/.config/exports-md.json` replace the defaults in this table. Explicit CLI
 values take precedence. See [Personal Defaults](../guides/human-defaults.md).
+
+## Section Ordering
+
+The ordering options apply in this order:
+
+1. `--groupBySyntax` groups functions, classes, constants, other non-types, and
+   types.
+2. `--sortByName` sorts symbols within that structure, with lowercase names
+   first and all-caps names last.
+3. `--reverseSymbols` reverses the rendered symbol sections after sorting.
 
 ## Output Destinations
 

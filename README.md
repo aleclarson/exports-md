@@ -1,21 +1,25 @@
 # exports-md
 
-`exports-md` is a small command line tool for inspecting the exported API surface of a TypeScript module, package export map, or published npm package. It compiles a target module to declaration output with the target project's local TypeScript install, then renders the exported declarations, external re-export statements, and TSDoc comments as Markdown.
+When you encounter an unfamiliar TypeScript module, you may need to know what
+you can import, which arguments it accepts, and what it returns. `exports-md`
+collects exported signatures and existing documentation comments into Markdown
+you can read, save, or share, including with a coding agent.
 
-It is designed for agent-readable API context: enough exported shape to work with a module without loading implementation details.
+If your editor or the package's documentation already answers your question,
+you may not need this tool. It does not supply missing explanations or verify
+runtime behavior.
+
+[Try one complete example](docs/getting-started.md) to see the source, command,
+and generated Markdown together. See [when it is useful](docs/index.md#is-this-useful-for-you)
+before deciding whether to add it to your workflow.
 
 ## Install
 
-Install the CLI in a project:
+You need Node.js `^22.18.0` or `>=24.2.0`, pnpm, and TypeScript installed in
+your project or a parent workspace. Install the CLI in the project:
 
 ```sh
-pnpm add exports-md
-```
-
-Install the companion skill that teaches agents when and how to use `exports-md`:
-
-```sh
-npx skills add aleclarson/exports-md/skills
+pnpm add -D exports-md
 ```
 
 ## Usage
@@ -23,50 +27,50 @@ npx skills add aleclarson/exports-md/skills
 Print documentation for every exported symbol in a module:
 
 ```sh
-exports-md src/index.ts
+pnpm exec exports-md src/index.ts
 ```
 
 Query one or more exported symbols:
 
 ```sh
-exports-md src/index.ts -- generateMarkdownForModule findNearestTypescript
+pnpm exec exports-md src/index.ts -- generateMarkdownForModule findNearestTypescript
 ```
 
 Print documentation for multiple inputs:
 
 ```sh
-exports-md src/index.ts src/feature.ts
+pnpm exec exports-md src/index.ts src/feature.ts
 ```
 
 Print symbol sections in reverse order:
 
 ```sh
-exports-md src/index.ts -r
+pnpm exec exports-md src/index.ts -r
 ```
 
 Render property TSDoc comments below declaration code blocks as a `**Properties**` list:
 
 ```sh
-exports-md src/index.ts --propertyDocs list
+pnpm exec exports-md src/index.ts --propertyDocs list
 ```
 
 Append a GitHub code search link to each symbol section:
 
 ```sh
-exports-md src/index.ts --github.repository aleclarson/leylines --github.searchLinks
+pnpm exec exports-md src/index.ts --github.repository aleclarson/leylines --github.searchLinks
 ```
 
 Write the Markdown to a file with normal shell redirection:
 
 ```sh
-exports-md src/index.ts -- generateMarkdownForModule > src/index.md
+pnpm exec exports-md src/index.ts -- generateMarkdownForModule > src/index.md
 ```
 
 Pipe the Markdown through another CLI command, such as
 [Glow](https://github.com/charmbracelet/glow):
 
 ```sh
-exports-md src/index.ts --pipe glow
+pnpm exec exports-md src/index.ts --pipe glow
 ```
 
 When invoked by a person, command defaults can be customized in `~/.config/exports-md.json`:
@@ -92,20 +96,20 @@ keeping agent output deterministic.
 Print documentation for every declaration entry point in a package export map:
 
 ```sh
-exports-md package.json
+pnpm exec exports-md package.json
 ```
 
 Package directories are shorthand for their `package.json`:
 
 ```sh
-exports-md .
-exports-md packages/foo
+pnpm exec exports-md .
+pnpm exec exports-md packages/foo
 ```
 
 Inspect published npm packages without adding them to the current project:
 
 ```sh
-exports-md qubu@0.4.2 @qubu/adapter-libsql@0.4.2 @qubu/better-auth@0.4.2 --follow
+pnpm exec exports-md qubu@0.4.2 @qubu/adapter-libsql@0.4.2 @qubu/better-auth@0.4.2 --follow
 ```
 
 Existing files and directories are treated as local inputs. If an input does
@@ -117,15 +121,23 @@ on `PATH`.
 Package inputs follow relative imports and re-exports to their declarations by default. For a module input, enable either behavior explicitly:
 
 ```sh
-exports-md src/index.ts -f
-exports-md src/index.ts -i
-exports-md src/index.ts -e
+pnpm exec exports-md src/index.ts -f
+pnpm exec exports-md src/index.ts -i
+pnpm exec exports-md src/index.ts -e
 ```
 
 Write package entry point docs to an output directory:
 
 ```sh
-exports-md package.json -o docs/api
+pnpm exec exports-md package.json -o docs/api
+```
+
+## Optional Agent Skill
+
+Install the companion skill that teaches agents when and how to use `exports-md`:
+
+```sh
+npx skills add aleclarson/exports-md/skills
 ```
 
 ## How it works
@@ -136,7 +148,7 @@ The tool emits declarations in memory, parses the resulting `.d.ts`, and renders
 
 With `--github.searchLinks`, every symbol section ends with a GitHub code search link. Set `--github.repository` to the `owner/repo` repository name used by those links.
 
-When the input is `package.json`, the tool reads the `exports` field and renders each declaration entry point with a separate H1 based on the package name and export subpath, such as `foo` for `.` and `foo/bar` for `./bar`. Export-map entries with `types` targets use those targets. A package's top-level `types` or `typings` field is used for the root entry when the export map does not provide a `types` condition. Wildcard targets are expanded against the package files and rendered with their concrete export subpaths. Entries without declaration targets use string `.js`, `.mjs`, or `.cjs` targets rewritten to `.d.ts`, `.d.mts`, or `.d.cts`, with a `.d.ts` fallback for packages that use that convention. Non-JavaScript/TypeScript entries such as `./package.json` are skipped. With `--outDir`, each entry point is written as a `.md` file under the output directory, preserving the entry point folder structure relative to their shared common root.
+When the input is `package.json`, the tool reads the `exports` field and renders each declaration entry point with a separate H1 based on the package name and export subpath, such as `foo` for `.` and `foo/bar` for `./bar`. Export-map entries with `types` targets use those targets. A package's top-level `types` or `typings` field takes precedence over inferred JavaScript declaration targets when the root export has neither a `types` condition nor an explicit declaration or TypeScript source target. Wildcard targets are expanded against the package files and rendered with their concrete export subpaths. Entries without declaration targets use string `.js`, `.mjs`, or `.cjs` targets rewritten to `.d.ts`, `.d.mts`, or `.d.cts`, with a `.d.ts` fallback for packages that use that convention. Non-JavaScript/TypeScript entries such as `./package.json` are skipped. With `--outDir`, each entry point is written as a `.md` file under the output directory, preserving the target files’ folder structure relative to their shared common root.
 
 Module inputs include import and re-export reference lines by default. With `--follow`, relative imports and re-exports are followed to their declarations. For fetched npm packages, this follows only files inside the fetched package; dependencies are not installed or fetched recursively. Import-only symbols referenced by exported declaration signatures are omitted instead of rendered as standalone API sections; when those symbols come from declaration files, the JavaScript API returns warnings because the public signature is exposing an unreachable type. With `--followReExports`, or for package inputs by default, relative re-exports are followed to their declarations, including bundled patterns that import aliased names from a relative chunk and export those names through a local export list. Exported imported aliases are rendered with the rest of the normal symbols, so `--groupBySyntax` uses one set of syntax category headings per document. Non-relative package imports, non-relative package re-exports, and namespace imports/re-exports are still rendered as reference lines.
 

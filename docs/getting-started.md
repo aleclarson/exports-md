@@ -1,57 +1,58 @@
 # Getting Started
 
-> Turn one TypeScript function into Markdown you can read, save, or share with
-> a coding agent.
+> Generate Markdown from one TypeScript function and check what it tells you.
 
 ## Install
 
-From a TypeScript project, install the command:
+You need Node.js `^22.18.0` or `>=24.2.0`, pnpm available in your terminal,
+and a project with TypeScript installed locally or in a parent workspace. Run
+the commands below from that project directory. If TypeScript is missing, run
+`pnpm add -D typescript` before continuing.
+
+Install the command as a development dependency:
 
 ```bash
 pnpm add -D exports-md
 ```
 
-You need Node.js `^22.18.0` or `>=24.2.0` and TypeScript installed in the
-project or a parent workspace. If TypeScript is not installed, run
-`pnpm add -D typescript` too. Run the commands below from that project directory.
-
 ## Try One File
 
-Suppose you want to know how to call a function without reading its body.
-Create a file named `greet.ts` with this content:
+Suppose you need to check what units a shipping helper expects and returns.
+Create a file named `shipping.ts` with this content:
 
 ```ts
-/** Build a greeting for a display name. */
-export function greet(name: string): string {
-  return `Hello, ${name}!`
+/** Calculate shipping in cents. Orders at or above 5000 cents ship free. */
+export function shippingCost(subtotalCents: number): number {
+  return subtotalCents >= 5000 ? 0 : 500
 }
 ```
 
 Print its exported function as Markdown:
 
 ```bash
-pnpm exec exports-md greet.ts
+pnpm exec exports-md shipping.ts
 ```
 
 The terminal output is:
 
-    # greet.ts
+    # shipping.ts
 
-    ## `greet`
+    ## `shippingCost`
 
-    Build a greeting for a display name.
+    Calculate shipping in cents. Orders at or above 5000 cents ship free.
 
     ```ts
-    export function greet(name: string): string;
+    export function shippingCost(subtotalCents: number): number;
     ```
 
+The signature shows the argument and return types; the existing comment supplies
+the units and free-shipping threshold. The output does not reveal the charge
+below that threshold or verify that the implementation follows its comment.
 
-The output keeps the documentation comment, parameter type, and return type.
-It leaves out the function body. You can see how to call `greet`, but the output
-alone does not tell you which greeting text it returns.
-
-Seeing this output confirms the command is working. Now replace `greet.ts`
-with a file from your project, such as `src/index.ts`.
+Seeing this output confirms the command works. This small example demonstrates
+the format; to judge its usefulness, replace `shipping.ts` in the command with a
+file from your project, such as `src/index.ts`. Check whether its signatures and
+comments answer your question without needing to read the implementation.
 
 ## Save The Result
 
@@ -59,17 +60,17 @@ The command prints to the terminal by default. To save Markdown for another
 reader or tool, redirect it to a file:
 
 ```bash
-pnpm exec exports-md greet.ts > greet-api.md
+pnpm exec exports-md shipping.ts > shipping-api.md
 ```
 
-This writes `greet-api.md`, replacing that file if it already exists. You can
+This writes `shipping-api.md`, replacing that file if it already exists. You can
 read it in a Markdown viewer or supply it as API context to a coding agent.
 
 ## Go Further When Needed
 
 - [Inspect packages](guides/inspect-packages.md) to read a local or published
   package across its supported import paths.
-- [Choose output](guides/select-output.md) if you only need certain exports
+- [Select exports and format output](guides/select-output.md) if you only need certain exports
   or want to change the presentation.
 
 For option lookup, use the [CLI reference](reference/cli.md).

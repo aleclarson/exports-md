@@ -3,28 +3,19 @@
 > Get a TypeScript module's exported functions, types, and documentation comments
 > together as Markdown.
 
-When you need to use an unfamiliar module, you may only need to know what you
-can import, which arguments a function accepts, and what it returns. Reading
-its implementation can mean working through details that do not answer those
-questions.
+When you encounter an unfamiliar TypeScript module, you may need to answer a
+narrow question: what can I import, what arguments does it accept, and what does
+it return? Exported signatures and existing documentation comments may be
+enough; you may not need to inspect the implementation.
 
-`exports-md` extracts that information into a document you can read, save, or
-pass to a coding agent. It describes the **public API**: the functions, classes,
-values, and types the module exports for other code to use.
+`exports-md` collects those signatures and comments into Markdown you can read,
+save, or share. It describes the **public API**: the functions, classes, values,
+and types the module exports for other code to use.
 
-For example, a function with a body becomes a declaration with its documentation:
-
-```ts
-/** Build a greeting for a display name. */
-export function greet(name: string): string
-```
-
-The generated Markdown gives each export a heading and includes any existing
-TSDoc comments (documentation comments written above declarations). It does not
-write missing explanations for you.
-
-[Try the complete example](getting-started.md) to see the source, command, and
-actual Markdown output.
+Each export gets a heading and a declaration: a description of a function or
+type without its implementation. Existing TSDoc comments (documentation comments
+written above declarations) supply the explanations. The tool does not write
+missing documentation or verify that comments match the implementation.
 
 ## Is This Useful For You?
 
@@ -43,16 +34,17 @@ prove what the implementation does.
 
 ## Where To Start
 
-Start with [Getting started](getting-started.md) for installation and one
-complete example. You will need a supported Node.js version and a project with
-TypeScript installed; the guide lists the requirements.
+[Try one file](getting-started.md) for prerequisites, a command, and its actual
+Markdown output. Then try a file from your project to judge whether this view
+answers your question.
 
 After trying it:
 
 - [Inspect packages](guides/inspect-packages.md) for local or published packages.
-- [Choose output](guides/select-output.md) to select exports or adjust formatting.
+- [Select exports and format output](guides/select-output.md) to select exports or adjust formatting.
 - Use the [CLI reference](reference/cli.md) for exact options and troubleshooting.
 
 [Personal defaults](guides/human-defaults.md) are optional settings for repeated
-interactive use. The generated API reference documents the JavaScript exports
-for callers integrating the library into their own code.
+interactive use. The generated
+[JavaScript API reference](reference/exports-md.md) is for callers integrating
+the library into their own code.

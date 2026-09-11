@@ -1,4 +1,4 @@
-# Choose Output
+# Select Exports And Format Output
 
 > Select the exports you need or make the generated Markdown easier to scan.
 
@@ -12,7 +12,7 @@ If you only need one function from a large module, request it by its exported
 name. Put names after `--` to separate them from input paths:
 
 ```bash
-pnpm exec exports-md greet.ts -- greet
+pnpm exec exports-md shipping.ts -- shippingCost
 ```
 
 The result includes the requested exports plus local declarations needed to
@@ -23,24 +23,30 @@ Multiple inputs belong before the delimiter. Each input must export the requeste
 name; omit the filter if you want all exports from several files:
 
 ```bash
-pnpm exec exports-md greet.ts src/index.ts -- greet
+pnpm exec exports-md shipping.ts src/index.ts -- shippingCost
 ```
 
 ## Follow Local Declarations
 
-A function may use a type imported from another file, or a module may re-export
-something defined elsewhere. By default, module output shows those connections
-as `import` or `export` lines. If you need the referenced types too, include
-declarations from relative paths such as `./types`:
+A module can re-export a function: make a function defined in another file
+available to its own callers. For example, with a helper in `src/shipping.ts`,
+`src/index.ts` might contain:
 
-```bash
-pnpm exec exports-md src/index.ts --followImports
-pnpm exec exports-md src/index.ts --followReExports
-pnpm exec exports-md src/index.ts --follow
+```ts
+export { shippingCost } from './shipping'
 ```
 
-`--follow` enables both behaviors. Non-relative package references and namespace
-imports or re-exports remain reference lines.
+By default, the Markdown includes that reference line. To include the function's
+signature and documentation instead, follow relative re-exports:
+
+```bash
+pnpm exec exports-md src/index.ts --followReExports
+```
+
+Similarly, `--followImports` includes declarations imported from relative files,
+such as a type imported from `./types`. Use `--follow` when you need both.
+Non-relative package references and namespace imports or re-exports remain
+reference lines. Package inputs follow relative declarations by default.
 
 ## Organize Symbol Sections
 
@@ -51,13 +57,8 @@ so you can find a function or type more easily:
 pnpm exec exports-md src/index.ts --groupBySyntax --sortByName
 ```
 
-You can use these options separately. When combined, they run in this order:
-
-1. `--groupBySyntax` groups functions, classes, constants, other non-types, and
-   types.
-2. `--sortByName` sorts symbols within that structure, with lowercase names
-   first and all-caps names last.
-3. `--reverseSymbols` reverses the rendered sections after sorting.
+You can use these options separately. See [section ordering](../reference/cli.md#section-ordering)
+for category order, name sorting, and reversal rules.
 
 ## Move Property Documentation
 
