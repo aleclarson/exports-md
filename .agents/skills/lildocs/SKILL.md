@@ -7,6 +7,23 @@ description: Use when authoring, reviewing, or restructuring Markdown documentat
 
 > Help readers make correct decisions quickly: organize around tasks and concepts, state boundaries plainly, and prove claims with concrete examples.
 
+## Scope
+
+Apply general writing guidance to Markdown documentation wherever it lives,
+including READMEs: page purpose, clarity, factual accuracy, terminology, and
+useful examples.
+
+Apply docs-site conventions only to pages published from the project's
+configured docs root, which may be a directory other than `docs/`. These include
+home-page branding, purpose blockquotes, folder-based navigation, docs-set
+organization, and generated-site validation. Preserve the purpose and existing
+structure of standalone documents such as READMEs. Paths under `docs/` below
+illustrate the configured docs root rather than require that directory name.
+
+Public API Documentation governs source-level TSDoc and the division of
+responsibility between source, guides, and generated declarations. Apply it
+when the task touches public API documentation.
+
 ## Read the Project
 
 Base documentation on the current project's facts, vocabulary, and support
@@ -32,7 +49,7 @@ Use published docs only when local package docs are unavailable:
 https://aleclarson.github.io/lildocs/
 ```
 
-Treat generated-site constraints as content constraints: folder-based
+For docs-site pages, treat generated-site constraints as content constraints: folder-based
 navigation, static links, headings and anchors, local search, diagrams, and
 assets all affect how readers find and trust the docs.
 
@@ -42,7 +59,66 @@ Give each page one durable job. Before drafting, decide what the reader is
 trying to do, what they already know, what decision the page must support, and
 where they should go next.
 
-For new pages in this project, follow the H1 with a purpose blockquote unless
+## General Technical Documentation Guidelines
+
+Apply these guidelines to explanatory Markdown, including READMEs. The docs-site home
+page's established slogan remains the intentional branding exception described
+below.
+
+Assume readers understand less than you expect, have little patience, and
+prefer simple language. Make necessary connections explicit without talking
+down to them. Introduce concepts only as needed so readers are not asked to
+absorb several unfamiliar ideas at once.
+
+1. Lead with the main idea that addresses the reader's problem, decision, or
+   task.
+2. Follow immediately with the value proposition: what the reader gains and
+   when it is useful. Explain differences from common alternatives where they
+   help the reader choose.
+3. Use plain, direct language; avoid slogans, marketing, and unnecessary
+   jargon.
+4. State limits, costs, prerequisites, and failure cases beside the benefits
+   they qualify.
+5. Support important claims with runnable examples, output, or observable
+   results.
+6. Make examples complete, internally consistent, and safe to copy.
+7. Explain placeholders clearly and never present incomplete commands as
+   pasteable.
+8. Show how readers can verify both successful and failed operations.
+9. Organize content as a funnel: quick orientation, working example, mental
+   model, then reference.
+10. Give each page one clear purpose and direct readers to the page that owns
+    deeper concepts.
+11. Keep advanced internals and optional workflows out of the required beginner
+    path.
+12. Use consistent terminology across pages.
+13. Add diagrams only when relationships, ownership, flow, or branching are
+    easier to understand visually.
+14. Validate commands, links, examples, and formatting before publishing. For
+    docs-site changes, also validate the generated documentation site.
+
+## Home Page
+
+This section applies only to pages in the configured docs root.
+
+Treat the home page as the project's introduction, not as a map of the docs.
+Use the project's canonical display name as the H1 and its established
+slogan/tagline as the plain blockquote immediately below it. Prefer wording
+from the project's README or package metadata, and do not replace it with a
+generic title such as `Introducing <name>` or `<name> Documentation`.
+
+```md
+# lildocs
+
+> A lightweight CLI that turns Markdown docs into a static searchable
+> documentation site.
+```
+
+This branding blockquote takes precedence over the general purpose-blockquote
+rule below; the rest of the home page can orient readers and link to the next
+steps.
+
+For new docs-site pages, follow the H1 with a purpose blockquote unless
 nearby docs use a different contract. The blockquote should clarify the page's
 real job: the decision it supports, the task it helps complete, or the boundary
 it draws.
@@ -72,6 +148,8 @@ Prefer direct clarity over page-navigation language.
 ```
 
 ## Information Architecture
+
+This section applies to the docs set in the configured docs root.
 
 Organize docs by reader movement, not by source-code ownership. A useful docs
 set has a few clear shapes:
@@ -191,8 +269,19 @@ package boundary over documenting the leak as official API.
 
 ## Writing Quality
 
-Lead with the reader's next decision or action, then provide the smallest
-command, config, file tree, table, or Markdown pattern that completes it.
+After the main idea and its value, provide the smallest command, config, file
+tree, table, or Markdown pattern that supports the reader's next decision or
+action.
+
+Give finer details their own sections so readers can find them without
+slowing down the main explanation. Be generous with short, descriptive
+headings: readers should be able to scan the page and go directly to the
+information they need.
+
+Write subheadings around the reader's goal, question, or lookup need. Prefer
+goals and outcomes in guides; use precise concept and mechanism names where
+readers need explanation or reference. Make headings specific enough that
+readers can predict what each section contains.
 
 Prefer observable outcomes over vague benefits.
 
@@ -299,8 +388,10 @@ Before finishing docs changes, verify that:
 - claims are grounded in project files, tests, package docs, or source
 - every non-trivial concept has a nearby example
 - guide examples use project-realistic names, paths, and commands
-- links, headings, anchors, diagrams, and assets work in the generated site
+- links, headings, anchors, diagrams, and assets work in the target renderer
+  (including the generated site for docs-site changes)
 - terminology is consistent across changed pages
 
-Run the project's available checks, such as formatting, linting, typechecking,
-tests, or a local docs build.
+Run checks relevant to the changed documentation, such as formatting and link
+checks. For docs-site changes, run a local docs build when available. Run lint,
+typecheck, or tests when changes affect code or executable examples.
