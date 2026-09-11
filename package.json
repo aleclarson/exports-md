@@ -38,7 +38,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
-    "lildocs": "^0.1.25",
+    "lildocs": "^0.1.29",
     "oxfmt": "^0.56.0",
     "oxlint": "^1.71.0",
     "radashi": "^12.9.1",
