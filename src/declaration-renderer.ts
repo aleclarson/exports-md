@@ -413,7 +413,7 @@ async function renderFollowedImportedReExportSections(
     )
     const targetDeclaration = isDeclarationFile(targetFile)
       ? await readFile(targetFile, 'utf8')
-      : compileDeclaration(ts, targetFile, context.cwd)
+      : await compileDeclaration(ts, targetFile, context.cwd)
     const targetContext = {
       ...context,
       inputFile: targetFile,
@@ -467,7 +467,7 @@ async function renderFollowedReExportSections(
     const overrides = getReExportedNameOverrides(ts, entry)
     const targetDeclaration = isDeclarationFile(targetFile)
       ? await readFile(targetFile, 'utf8')
-      : compileDeclaration(ts, targetFile, context.cwd)
+      : await compileDeclaration(ts, targetFile, context.cwd)
     const targetContext = {
       ...context,
       inputFile: targetFile,
