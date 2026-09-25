@@ -91,11 +91,15 @@ function emit(file) {
     if (target) emit(target)
   }
   const exported = [...source.matchAll(/(\\/\\*\\*[\\s\\S]*?\\*\\/\\s*)?export\\s+(?:declare\\s+)?(function|const|type|interface)\\s+(\\w+)/g)]
-  const declarations = exported.map(([, comment = '', kind, name]) => comment.trim() + (comment ? '\\n' : '') + (kind === 'function'
+  const declarations = [
+    ...[...source.matchAll(/export\\s+\\{[^}]+\\}\\s+from\\s+['\"]([^'\"]+)['\"]/g)]
+      .map(([statement]) => statement + ';'),
+    ...exported.map(([, comment = '', kind, name]) => comment.trim() + (comment ? '\\n' : '') + (kind === 'function'
     ? 'export declare function ' + name + '(): string;'
     : kind === 'const'
       ? 'export declare const ' + name + ': string;'
-      : 'export declare ' + kind + ' ' + name + ' {}'))
+      : 'export declare ' + kind + ' ' + name + ' {}')),
+  ]
   const output = path.join(outputDir, path.basename(file).replace(/\\.(ts|tsrx)$/, '.d.ts'))
   fs.mkdirSync(path.dirname(output), { recursive: true })
   fs.writeFileSync(output, declarations.join('\\n') + '\\n')

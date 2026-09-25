@@ -251,7 +251,13 @@ function readConfigOptions(ts: TypeScript, configPath: string, cwd: string) {
     {},
     configPath,
   )
-  throwOnDiagnostics(ts, parsed.errors, cwd)
+  // This tool compiles an explicit input file, so a project include glob that
+  // happens to match no files must not prevent reading its compiler options.
+  throwOnDiagnostics(
+    ts,
+    parsed.errors.filter((diagnostic) => diagnostic.code !== 18003),
+    cwd,
+  )
 
   return parsed.options
 }

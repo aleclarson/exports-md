@@ -37,7 +37,7 @@ test('renders TypeScript package entries that re-export TSRX modules', async () 
 
   expect(result.markdown).toContain('## `Button`')
   expect(result.markdown).toContain('Public button API.')
-  expect(result.markdown).toContain('export declare function Button(): string;')
+  expect(result.markdown).toContain('export function Button(): string;')
   expect(result.markdown).not.toContain('<button />')
 })
 
