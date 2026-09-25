@@ -21,6 +21,7 @@ import type {
 } from './internal-types.ts'
 
 const execFile = promisify(execFileCallback)
+const sourceExtensions = ['.ts', '.mts', '.cts', '.tsx', '.tsrx']
 
 export async function withNpmPackage<T>(
   packageSpec: string,
@@ -91,7 +92,7 @@ export function isNpmPackageSpec(value: string) {
     value.startsWith('.') ||
     value.startsWith('/') ||
     value.includes('\\') ||
-    ['.cjs', '.cts', '.js', '.json', '.mjs', '.mts', '.ts', '.tsx'].includes(extname(value))
+    ['.cjs', '.cts', '.js', '.json', '.mjs', '.mts', '.ts', '.tsx', '.tsrx'].includes(extname(value))
   ) {
     return false
   }
@@ -218,7 +219,7 @@ function hasTypesCondition(value: unknown): boolean {
 
 function hasExplicitDeclarationTarget(value: unknown): boolean {
   if (typeof value === 'string') {
-    return isDeclarationFile(value) || ['.ts', '.mts', '.cts', '.tsx'].includes(extname(value))
+    return isDeclarationFile(value) || sourceExtensions.includes(extname(value))
   }
 
   if (Array.isArray(value)) {
@@ -252,7 +253,7 @@ function collectDeclarationTargets(value: unknown): string[] {
 }
 
 function toDeclarationTarget(target: string) {
-  if (isDeclarationFile(target) || ['.ts', '.mts', '.cts', '.tsx'].includes(extname(target))) {
+  if (isDeclarationFile(target) || sourceExtensions.includes(extname(target))) {
     return target
   }
 

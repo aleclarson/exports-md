@@ -56,6 +56,12 @@ The command uses the nearest `node_modules/typescript` found by walking upward
 from the current working directory. Published packages require `npm` on `PATH`;
 their tarballs are extracted temporarily and removed after rendering.
 
+For `.tsrx` source entry points or local imports, install
+`@tsrx/typescript-plugin` and the target compiler selected by the project's
+`tsrx.compiler` configuration. `exports-md` invokes `tsrx-tsc` with a temporary
+declaration output directory. When `target` is omitted, declaration emit uses
+ES2022; an explicit target or `lib` remains in effect.
+
 ## Options
 
 | Option                             | Default  | Description                                                                                |

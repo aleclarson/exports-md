@@ -9,6 +9,10 @@ and a project with TypeScript installed locally or in a parent workspace. Run
 the commands below from that project directory. If TypeScript is missing, run
 `pnpm add -D typescript` before continuing.
 
+For `.tsrx` source files, also install `@tsrx/typescript-plugin` and the
+TSRX compiler configured by the project. `exports-md` uses the workspace's
+`tsrx-tsc` wrapper to emit declarations before rendering them.
+
 Install the command as a development dependency:
 
 ```bash

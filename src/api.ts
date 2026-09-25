@@ -269,7 +269,7 @@ async function generateMarkdownForDeclarationFile(
   const ts = loadWorkspaceTypescript(cwd)
   const declaration = isDeclarationFile(inputFile)
     ? await readFile(inputFile, 'utf8')
-    : compileDeclaration(ts, inputFile, cwd)
+    : await compileDeclaration(ts, inputFile, cwd)
   const foundSymbols =
     symbols.length === 0
       ? new Set<string>()

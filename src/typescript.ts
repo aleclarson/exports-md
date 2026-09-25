@@ -1,9 +1,15 @@
 import { existsSync } from 'node:fs'
+import { execFile as execFileCallback } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { dirname, extname, join, resolve } from 'node:path'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, extname, join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 import type { CompilerOptions, Diagnostic } from 'typescript'
 import { isDirectory, isFile } from './files.ts'
 import type { TypeScript } from './internal-types.ts'
+
+const execFile = promisify(execFileCallback)
 
 export function findNearestTypescript(startDir = process.cwd()) {
   let dir = resolve(startDir)
@@ -28,7 +34,19 @@ export function loadWorkspaceTypescript(cwd = process.cwd()): TypeScript {
   return require('typescript') as TypeScript
 }
 
-export function compileDeclaration(ts: TypeScript, inputFile: string, cwd = process.cwd()) {
+export async function compileDeclaration(
+  ts: TypeScript,
+  inputFile: string,
+  cwd = process.cwd(),
+): Promise<string> {
+  const tsrxTsc = findTsrxTsc(inputFile) ?? findTsrxTsc(cwd)
+  if (extname(inputFile) === '.tsrx' || tsrxTsc) {
+    if (!tsrxTsc) {
+      throw new Error(`Compiling ${inputFile} requires @tsrx/typescript-plugin in the workspace`)
+    }
+    return compileWithTsrxTsc(ts, inputFile, cwd, tsrxTsc)
+  }
+
   const options = getCompilerOptions(ts, inputFile, cwd)
   const host = ts.createCompilerHost(options, true)
   const outputs = new Map<string, string>()
@@ -76,8 +94,12 @@ export function resolveModuleTarget(
     options = {}
   }
 
-  const resolvedFileName = ts.resolveModuleName(moduleSpecifier, inputFile, options, ts.sys)
+  let resolvedFileName = ts.resolveModuleName(moduleSpecifier, inputFile, options, ts.sys)
     .resolvedModule?.resolvedFileName
+  if (!resolvedFileName && moduleSpecifier.startsWith('.')) {
+    const candidate = resolve(dirname(inputFile), moduleSpecifier)
+    if (extname(candidate) === '.tsrx' && isFile(candidate)) resolvedFileName = candidate
+  }
   if (!resolvedFileName || isNodeModulesPath(resolvedFileName)) return undefined
 
   return resolvedFileName
@@ -102,7 +124,7 @@ export function assertTypeScriptModule(inputFile: string) {
   }
 
   const extension = extname(inputFile)
-  if (!['.ts', '.mts', '.cts', '.tsx'].includes(extension)) {
+  if (!['.ts', '.mts', '.cts', '.tsx', '.tsrx'].includes(extension)) {
     throw new Error(`Expected a TypeScript module, got ${inputFile}`)
   }
 }
@@ -113,6 +135,7 @@ function getCompilerOptions(ts: TypeScript, inputFile: string, cwd: string) {
 
   return {
     ...baseOptions,
+    target: baseOptions.target ?? ts.ScriptTarget.ES2022,
     declaration: true,
     declarationMap: false,
     emitDeclarationOnly: true,
@@ -122,6 +145,96 @@ function getCompilerOptions(ts: TypeScript, inputFile: string, cwd: string) {
     sourceMap: false,
     skipLibCheck: true,
   }
+}
+
+function findTsrxTsc(startDir: string) {
+  let dir = resolve(startDir)
+
+  while (true) {
+    const candidate = join(dir, 'node_modules', '@tsrx', 'typescript-plugin', 'dist', 'tsc.js')
+    if (isFile(candidate)) return candidate
+
+    const parent = dirname(dir)
+    if (parent === dir) return undefined
+    dir = parent
+  }
+}
+
+function compileWithTsrxTsc(ts: TypeScript, inputFile: string, cwd: string, tscPath: string) {
+  return compileWithTsrxTscAsync(ts, inputFile, cwd, tscPath)
+}
+
+function compileWithTsrxTscAsync(
+  ts: TypeScript,
+  inputFile: string,
+  cwd: string,
+  tscPath: string,
+) {
+  return (async () => {
+    const baseConfig = findTsConfig(inputFile)
+    const baseOptions = baseConfig ? readConfigOptions(ts, baseConfig, cwd) : {}
+    const tempDir = await mkdtemp(join(tmpdir(), 'exports-md-tsrx-'))
+    const outputDir = join(tempDir, 'declarations')
+    const configPath = join(tempDir, 'tsconfig.json')
+    const config = {
+      ...(baseConfig ? { extends: baseConfig } : {}),
+      files: [resolve(inputFile)],
+      include: [],
+      compilerOptions: {
+        declaration: true,
+        declarationMap: false,
+        emitDeclarationOnly: true,
+        noEmit: false,
+        noEmitOnError: true,
+        outDir: outputDir,
+        skipLibCheck: true,
+        sourceMap: false,
+        ...(baseOptions.target === undefined ? { target: 'ES2022' } : {}),
+      },
+    }
+
+    try {
+      await writeFile(configPath, JSON.stringify(config))
+      await execFile(process.execPath, [tscPath, '--project', configPath, '--pretty', 'false'], {
+        cwd,
+        maxBuffer: 10 * 1024 * 1024,
+      })
+      const declarations = await collectDeclarationFiles(outputDir)
+      const extension = extname(inputFile)
+      const declarationExtension =
+        extension === '.mts' ? '.d.mts' : extension === '.cts' ? '.d.cts' : '.d.ts'
+      const expectedName = `${inputFile.slice(0, -extension.length)}${declarationExtension}`
+      const declarationName = basename(expectedName)
+      const candidates = declarations.filter((file) => basename(file) === declarationName)
+      if (candidates.length !== 1) {
+        throw new Error(`TSRX compiler did not emit a declaration for ${inputFile}`)
+      }
+      return await readFile(candidates[0]!, 'utf8')
+    } catch (error) {
+      if (error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string') {
+        throw new Error(error.stderr.trim() || `Could not compile TSRX module ${inputFile}`)
+      }
+      throw error
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })()
+}
+
+async function collectDeclarationFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  const files: string[] = []
+  for (const entry of entries) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) files.push(...(await collectDeclarationFiles(path)))
+    else if (
+      entry.isFile() &&
+      (entry.name.endsWith('.d.ts') || entry.name.endsWith('.d.mts') || entry.name.endsWith('.d.cts'))
+    ) {
+      files.push(path)
+    }
+  }
+  return files
 }
 
 function readConfigOptions(ts: TypeScript, configPath: string, cwd: string) {
