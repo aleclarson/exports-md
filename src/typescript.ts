@@ -98,7 +98,10 @@ export function resolveModuleTarget(
     .resolvedModule?.resolvedFileName
   if (!resolvedFileName && moduleSpecifier.startsWith('.')) {
     const candidate = resolve(dirname(inputFile), moduleSpecifier)
-    if (extname(candidate) === '.tsrx' && isFile(candidate)) resolvedFileName = candidate
+    const candidates = candidate.endsWith('.tsrx')
+      ? [candidate]
+      : [`${candidate}.tsrx`, join(candidate, 'index.tsrx')]
+    resolvedFileName = candidates.find((path) => isFile(path))
   }
   if (!resolvedFileName || isNodeModulesPath(resolvedFileName)) return undefined
 

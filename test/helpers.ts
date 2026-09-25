@@ -64,3 +64,43 @@ export async function createProject() {
 
   return project
 }
+
+export async function installTsrxCompiler(project: string) {
+  const compilerDir = join(project, 'node_modules', '@tsrx', 'typescript-plugin', 'dist')
+  await mkdir(compilerDir, { recursive: true })
+  await writeFile(
+    join(compilerDir, 'tsc.js'),
+    `
+const fs = require('node:fs')
+const path = require('node:path')
+const configPath = process.argv[process.argv.indexOf('--project') + 1]
+const config = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+const outputDir = config.compilerOptions.outDir
+const root = config.files[0]
+const visited = new Set()
+function emit(file) {
+  if (visited.has(file)) return
+  visited.add(file)
+  const source = fs.readFileSync(file, 'utf8')
+  for (const match of source.matchAll(/(?:export|import)\\s+[^;]*?from\\s+['\"]([^'\"]+)['\"]/g)) {
+    const specifier = match[1]
+    if (!specifier.startsWith('.')) continue
+    const base = path.resolve(path.dirname(file), specifier)
+    const target = [base, base + '.ts', base + '.tsrx', path.join(base, 'index.tsrx')]
+      .find(candidate => fs.existsSync(candidate) && /\\.(ts|tsrx)$/.test(candidate))
+    if (target) emit(target)
+  }
+  const exported = [...source.matchAll(/(\\/\\*\\*[\\s\\S]*?\\*\\/\\s*)?export\\s+(?:declare\\s+)?(function|const|type|interface)\\s+(\\w+)/g)]
+  const declarations = exported.map(([, comment = '', kind, name]) => comment.trim() + (comment ? '\\n' : '') + (kind === 'function'
+    ? 'export declare function ' + name + '(): string;'
+    : kind === 'const'
+      ? 'export declare const ' + name + ': string;'
+      : 'export declare ' + kind + ' ' + name + ' {}'))
+  const output = path.join(outputDir, path.basename(file).replace(/\\.(ts|tsrx)$/, '.d.ts'))
+  fs.mkdirSync(path.dirname(output), { recursive: true })
+  fs.writeFileSync(output, declarations.join('\\n') + '\\n')
+}
+emit(root)
+`,
+  )
+}

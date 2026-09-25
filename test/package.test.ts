@@ -5,13 +5,65 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { generateMarkdownForModule } from '../src/index'
-import { createProject, humanCliEnv, tempDirs } from './helpers'
+import { createProject, humanCliEnv, installTsrxCompiler, tempDirs } from './helpers'
 
 const execFile = promisify(execFileCallback)
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
+test('renders TypeScript package entries that re-export TSRX modules', async () => {
+  const project = await createProject()
+  const packageDir = join(project, 'packages', 'ui')
+  const sourceDir = join(packageDir, 'src')
+  await mkdir(sourceDir, { recursive: true })
+  await installTsrxCompiler(project)
+  await writeFile(
+    join(sourceDir, 'index.web.ts'),
+    `export { Button } from './button.web'\n`,
+  )
+  await writeFile(
+    join(sourceDir, 'button.web.tsrx'),
+    `/** Public button API. */\nexport function Button() { return <button /> }\n`,
+  )
+  await writeFile(
+    join(packageDir, 'package.json'),
+    JSON.stringify({ name: '@example/ui', exports: './src/index.web.ts' }),
+  )
+
+  const result = await generateMarkdownForModule(join(packageDir, 'package.json'), {
+    cwd: project,
+  })
+
+  expect(result.markdown).toContain('## `Button`')
+  expect(result.markdown).toContain('Public button API.')
+  expect(result.markdown).toContain('export declare function Button(): string;')
+  expect(result.markdown).not.toContain('<button />')
+})
+
+test('renders a TSRX package entry point', async () => {
+  const project = await createProject()
+  const packageDir = join(project, 'packages', 'widgets')
+  await mkdir(join(packageDir, 'src'), { recursive: true })
+  await installTsrxCompiler(project)
+  await writeFile(
+    join(packageDir, 'src', 'index.tsrx'),
+    `/** Widget configuration. */\nexport interface WidgetOptions { enabled: boolean }\n`,
+  )
+  await writeFile(
+    join(packageDir, 'package.json'),
+    JSON.stringify({ name: '@example/widgets', exports: './src/index.tsrx' }),
+  )
+
+  const result = await generateMarkdownForModule(join(packageDir, 'package.json'), {
+    cwd: project,
+  })
+
+  expect(result.markdown).toContain('## `WidgetOptions`')
+  expect(result.markdown).toContain('Widget configuration.')
+  expect(result.markdown).not.toContain('enabled: boolean }')
+})
+
 test('follows relative re-exports by default for package inputs', async () => {
   const project = await createProject()
   const packageJson = join(project, 'package.json')
