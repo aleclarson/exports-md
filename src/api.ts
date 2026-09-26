@@ -18,7 +18,9 @@ import { renderDeclarationMarkdown } from './declaration-renderer.ts'
 import {
   assertTypeScriptModule,
   compileDeclaration,
+  getPlatformModuleSuffix,
   findNearestTypescript as findNearestTypescriptService,
+  findTsrxConfig,
   findTsConfig,
   loadWorkspaceTypescript,
 } from './typescript.ts'
@@ -285,6 +287,8 @@ async function generateMarkdownForDeclarationFile(
           followReExports,
           github,
           inputFile,
+          platformModuleSuffix: getPlatformModuleSuffix(inputFile),
+          projectConfigPath: findTsrxConfig(ts, inputFile, getPlatformModuleSuffix(inputFile)),
           propertyDocs,
           reverseSymbols,
           groupBySyntax,

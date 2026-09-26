@@ -77,6 +77,9 @@ const configPath = process.argv[process.argv.indexOf('--project') + 1]
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'))
 const outputDir = config.compilerOptions.outDir
 const root = config.files[0]
+if (root.endsWith('.web.ts') && !config.compilerOptions.moduleSuffixes?.includes('.web')) {
+  throw new Error('Missing .web module resolution')
+}
 const visited = new Set()
 function emit(file) {
   if (visited.has(file)) return
@@ -86,7 +89,7 @@ function emit(file) {
     const specifier = match[1]
     if (!specifier.startsWith('.')) continue
     const base = path.resolve(path.dirname(file), specifier)
-    const target = [base, base + '.ts', base + '.tsrx', path.join(base, 'index.tsrx')]
+    const target = [base, base + '.web.tsrx', base + '.ts', base + '.tsrx', path.join(base, 'index.tsrx')]
       .find(candidate => fs.existsSync(candidate) && /\\.(ts|tsrx)$/.test(candidate))
     if (target) emit(target)
   }

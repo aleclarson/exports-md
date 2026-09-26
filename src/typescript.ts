@@ -37,16 +37,26 @@ export async function compileDeclaration(
   ts: TypeScript,
   inputFile: string,
   cwd = process.cwd(),
+  platformModuleSuffix?: string,
+  projectConfigPath?: string,
 ): Promise<string> {
+  const effectivePlatformSuffix = getPlatformModuleSuffix(inputFile) ?? platformModuleSuffix
   const tsrxTsc = findTsrxTsc(inputFile) ?? findTsrxTsc(cwd)
   if (extname(inputFile) === '.tsrx' || tsrxTsc) {
     if (!tsrxTsc) {
       throw new Error(`Compiling ${inputFile} requires @tsrx/typescript-plugin in the workspace`)
     }
-    return compileWithTsrxTsc(ts, inputFile, cwd, tsrxTsc)
+    return compileWithTsrxTsc(
+      ts,
+      inputFile,
+      cwd,
+      tsrxTsc,
+      effectivePlatformSuffix,
+      projectConfigPath,
+    )
   }
 
-  const options = getCompilerOptions(ts, inputFile, cwd)
+  const options = getCompilerOptions(ts, inputFile, cwd, effectivePlatformSuffix, projectConfigPath)
   const host = ts.createCompilerHost(options, true)
   const outputs = new Map<string, string>()
   let declaration: string | undefined
@@ -83,12 +93,14 @@ export function resolveModuleTarget(
   inputFile: string,
   cwd: string,
   moduleSpecifier: string,
+  platformModuleSuffix?: string,
+  projectConfigPath?: string,
 ) {
   if (!moduleSpecifier.startsWith('.')) return undefined
 
   let options: CompilerOptions
   try {
-    options = getCompilerOptions(ts, inputFile, cwd)
+    options = getCompilerOptions(ts, inputFile, cwd, platformModuleSuffix, projectConfigPath)
   } catch {
     options = {}
   }
@@ -97,9 +109,10 @@ export function resolveModuleTarget(
     .resolvedModule?.resolvedFileName
   if (!resolvedFileName && moduleSpecifier.startsWith('.')) {
     const candidate = resolve(dirname(inputFile), moduleSpecifier)
+    const suffixCandidates = platformModuleSuffix ? [`${candidate}${platformModuleSuffix}.ts`] : []
     const candidates = candidate.endsWith('.tsrx')
       ? [candidate]
-      : [`${candidate}.tsrx`, join(candidate, 'index.tsrx')]
+      : [...suffixCandidates, `${candidate}.tsrx`, `${candidate}.ts`, join(candidate, 'index.tsrx')]
     resolvedFileName = candidates.find((path) => isFile(path))
   }
   if (!resolvedFileName || isNodeModulesPath(resolvedFileName)) return undefined
@@ -131,8 +144,14 @@ export function assertTypeScriptModule(inputFile: string) {
   }
 }
 
-function getCompilerOptions(ts: TypeScript, inputFile: string, cwd: string) {
-  const configPath = findTsConfig(inputFile)
+function getCompilerOptions(
+  ts: TypeScript,
+  inputFile: string,
+  cwd: string,
+  platformModuleSuffix?: string,
+  projectConfigPath?: string,
+) {
+  const configPath = projectConfigPath ?? findTsrxConfig(ts, inputFile, platformModuleSuffix)
   const baseOptions = configPath ? readConfigOptions(ts, configPath, cwd) : {}
 
   return {
@@ -162,8 +181,70 @@ function findTsrxTsc(startDir: string) {
   }
 }
 
-function compileWithTsrxTsc(ts: TypeScript, inputFile: string, cwd: string, tscPath: string) {
-  return compileWithTsrxTscAsync(ts, inputFile, cwd, tscPath)
+export function findTsrxConfig(ts: TypeScript, inputFile: string, platformModuleSuffix?: string) {
+  const directConfig = findTsConfig(inputFile)
+  if (directConfig) return directConfig
+
+  const baseConfig = findTsrxBaseConfig(inputFile)
+  if (!baseConfig) return undefined
+
+  const workspaceRoot = dirname(baseConfig)
+  const candidates = ts.sys.readDirectory(
+    workspaceRoot,
+    ['.json'],
+    ['**/node_modules/**', '**/.git/**'],
+    ['**/tsconfig.json'],
+  )
+  let bestConfig: string | undefined
+  let bestScore = 0
+
+  for (const configPath of candidates) {
+    const config = ts.readConfigFile(configPath, ts.sys.readFile)
+    if (!config.config) continue
+    const parsed = ts.parseJsonConfigFileContent(
+      config.config,
+      ts.sys,
+      dirname(configPath),
+      {},
+      configPath,
+    )
+    if (!parsed.fileNames.some((file) => samePath(ts, file, inputFile))) continue
+
+    const configuredSuffixes = parsed.options.moduleSuffixes as string[] | undefined
+    const conditions = parsed.options.customConditions as string[] | undefined
+    const expectedCondition = platformModuleSuffix?.slice(1)
+    const score =
+      expectedCondition &&
+      platformModuleSuffix &&
+      (configuredSuffixes?.includes(platformModuleSuffix) ||
+        conditions?.includes(expectedCondition))
+        ? 2
+        : 1
+    if (score > bestScore) {
+      bestConfig = configPath
+      bestScore = score
+    }
+  }
+
+  return bestConfig ?? baseConfig
+}
+
+function compileWithTsrxTsc(
+  ts: TypeScript,
+  inputFile: string,
+  cwd: string,
+  tscPath: string,
+  platformModuleSuffix?: string,
+  projectConfigPath?: string,
+) {
+  return compileWithTsrxTscAsync(
+    ts,
+    inputFile,
+    cwd,
+    tscPath,
+    platformModuleSuffix,
+    projectConfigPath,
+  )
 }
 
 function compileWithTsrxTscAsync(
@@ -171,40 +252,58 @@ function compileWithTsrxTscAsync(
   inputFile: string,
   cwd: string,
   tscPath: string,
+  platformModuleSuffix?: string,
+  projectConfigPath?: string,
 ) {
   return (async () => {
-    const baseConfig = findTsConfig(inputFile)
+    const baseConfig = projectConfigPath ?? findTsrxConfig(ts, inputFile, platformModuleSuffix)
     const baseOptions = baseConfig ? readConfigOptions(ts, baseConfig, cwd) : {}
+    const rawConfig = baseConfig ? ts.readConfigFile(baseConfig, ts.sys.readFile).config : {}
+    const inheritedFiles = Array.isArray(rawConfig.files)
+      ? rawConfig.files.map((file: string) => resolve(dirname(baseConfig!), file))
+      : []
     // Keep the temporary config beside the project config so TSRX can resolve
     // compiler plugins and compiler packages from the workspace.
-    const tempDir = await mkdtemp(
-      join(baseConfig ? dirname(baseConfig) : cwd, '.exports-md-tsrx-'),
-    )
+    const tempDir = await mkdtemp(join(baseConfig ? dirname(baseConfig) : cwd, '.exports-md-tsrx-'))
     const outputDir = join(tempDir, 'declarations')
     const configPath = join(tempDir, 'tsconfig.json')
+    const effectivePlatformSuffix = getPlatformModuleSuffix(inputFile) ?? platformModuleSuffix
     const config = {
       ...(baseConfig ? { extends: baseConfig } : {}),
-      files: [resolve(inputFile)],
+      files: [...inheritedFiles, resolve(inputFile)],
       include: [],
       compilerOptions: {
         declaration: true,
         declarationMap: false,
         emitDeclarationOnly: true,
         noEmit: false,
-        noEmitOnError: true,
+        noEmitOnError: false,
         outDir: outputDir,
         skipLibCheck: true,
         sourceMap: false,
         ...(baseOptions.target === undefined ? { target: 'ES2022' } : {}),
+        ...(baseOptions.moduleSuffixes === undefined && effectivePlatformSuffix
+          ? { moduleSuffixes: [effectivePlatformSuffix, ''] }
+          : {}),
       },
     }
 
     try {
       await writeFile(configPath, JSON.stringify(config))
-      await execFile(process.execPath, [tscPath, '--project', configPath, '--pretty', 'false'], {
-        cwd,
-        maxBuffer: 10 * 1024 * 1024,
-      })
+      try {
+        await execFile(process.execPath, [tscPath, '--project', configPath, '--pretty', 'false'], {
+          cwd,
+          maxBuffer: 10 * 1024 * 1024,
+        })
+      } catch (error) {
+        const detail = getCompilerFailureOutput(error)
+        // Some projects contain a TypeScript facade and a same-named TSRX file.
+        // TSRX strips its extension for declaration output, so only that unused
+        // transitive declaration collides while the requested entry is emitted.
+        if (!detail || detail.split('\n').some((line) => !/^error TS5056:/.test(line))) {
+          throw new Error(detail || `Could not compile TSRX module ${inputFile}`)
+        }
+      }
       const declarations = await collectDeclarationFiles(outputDir)
       const extension = extname(inputFile)
       const declarationExtension =
@@ -216,15 +315,35 @@ function compileWithTsrxTscAsync(
         throw new Error(`TSRX compiler did not emit a declaration for ${inputFile}`)
       }
       return await readFile(candidates[0]!, 'utf8')
-    } catch (error) {
-      if (error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string') {
-        throw new Error(error.stderr.trim() || `Could not compile TSRX module ${inputFile}`)
-      }
-      throw error
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
   })()
+}
+
+function getCompilerFailureOutput(error: unknown) {
+  if (!error || typeof error !== 'object') return ''
+  const stderr = 'stderr' in error && typeof error.stderr === 'string' ? error.stderr.trim() : ''
+  const stdout = 'stdout' in error && typeof error.stdout === 'string' ? error.stdout.trim() : ''
+  return [stderr, stdout].filter(Boolean).join('\n')
+}
+
+function findTsrxBaseConfig(inputFile: string) {
+  let dir = dirname(inputFile)
+
+  while (true) {
+    const candidate = join(dir, 'tsconfig.base.json')
+    if (isFile(candidate)) return candidate
+
+    const parent = dirname(dir)
+    if (dir === parent) return undefined
+    dir = parent
+  }
+}
+
+export function getPlatformModuleSuffix(inputFile: string) {
+  const match = basename(inputFile).match(/\.(web|native|ios|android)\.(?:ts|tsx|tsrx)$/)
+  return match?.[1] ? `.${match[1]}` : undefined
 }
 
 async function collectDeclarationFiles(directory: string): Promise<string[]> {
@@ -235,7 +354,9 @@ async function collectDeclarationFiles(directory: string): Promise<string[]> {
     if (entry.isDirectory()) files.push(...(await collectDeclarationFiles(path)))
     else if (
       entry.isFile() &&
-      (entry.name.endsWith('.d.ts') || entry.name.endsWith('.d.mts') || entry.name.endsWith('.d.cts'))
+      (entry.name.endsWith('.d.ts') ||
+        entry.name.endsWith('.d.mts') ||
+        entry.name.endsWith('.d.cts'))
     ) {
       files.push(path)
     }

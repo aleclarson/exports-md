@@ -64,6 +64,11 @@ ES2022; an explicit target or `lib` remains in effect.
 TypeScript entries can re-export `.tsrx` files directly, for example
 `export { View } from './View.web.tsrx'`. `exports-md` renders the emitted
 declarations, so TSRX implementation bodies are omitted.
+For TSRX entries, `exports-md` uses the nearest `tsconfig.json`, or a workspace
+config that includes the entry when there is no package config. It falls back to
+the nearest `tsconfig.base.json`. Platform entry names such as `index.web.ts`
+select matching TypeScript `moduleSuffixes` when the selected config does not
+set them.
 
 ## Options
 

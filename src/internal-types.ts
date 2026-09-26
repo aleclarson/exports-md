@@ -99,6 +99,8 @@ export interface RenderContext {
   followReExports: boolean
   github?: GitHubOptions
   inputFile: string
+  platformModuleSuffix?: string
+  projectConfigPath?: string
   propertyDocs: PropertyDocMode
   reverseSymbols: boolean
   groupBySyntax: boolean

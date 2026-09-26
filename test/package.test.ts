@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -12,16 +12,20 @@ const execFile = promisify(execFileCallback)
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
-test('renders TypeScript package entries that re-export explicitly named TSRX modules', async () => {
+test('renders TypeScript package entries that re-export platform TSRX modules without a package tsconfig', async () => {
   const project = await createProject()
+  await unlink(join(project, 'tsconfig.json'))
+  await writeFile(
+    join(project, 'tsconfig.base.json'),
+    JSON.stringify({
+      compilerOptions: { jsx: 'preserve', module: 'esnext', moduleResolution: 'bundler' },
+    }),
+  )
   const packageDir = join(project, 'packages', 'ui')
   const sourceDir = join(packageDir, 'src')
   await mkdir(sourceDir, { recursive: true })
   await installTsrxCompiler(project)
-  await writeFile(
-    join(sourceDir, 'index.web.ts'),
-    `export { Button } from './button.web.tsrx'\n`,
-  )
+  await writeFile(join(sourceDir, 'index.web.ts'), `export { Button } from './button.web.tsrx'\n`)
   await writeFile(
     join(sourceDir, 'button.web.tsrx'),
     `/** Public button API. */\nexport function Button() { return <button /> }\n`,

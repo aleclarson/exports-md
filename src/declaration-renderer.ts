@@ -342,6 +342,8 @@ async function renderFollowedImportSections(
       context.inputFile,
       context.cwd,
       entry.moduleSpecifier,
+      context.platformModuleSuffix,
+      context.projectConfigPath,
     )
     if (!targetFile || context.visited.has(resolve(targetFile))) continue
 
@@ -403,6 +405,8 @@ async function renderFollowedImportedReExportSections(
       context.inputFile,
       context.cwd,
       importEntry.moduleSpecifier,
+      context.platformModuleSuffix,
+      context.projectConfigPath,
     )
     if (!targetFile || context.visited.has(resolve(targetFile))) continue
 
@@ -413,7 +417,13 @@ async function renderFollowedImportedReExportSections(
     )
     const targetDeclaration = isDeclarationFile(targetFile)
       ? await readFile(targetFile, 'utf8')
-      : await compileDeclaration(ts, targetFile, context.cwd)
+      : await compileDeclaration(
+          ts,
+          targetFile,
+          context.cwd,
+          context.platformModuleSuffix,
+          context.projectConfigPath,
+        )
     const targetContext = {
       ...context,
       inputFile: targetFile,
@@ -460,6 +470,8 @@ async function renderFollowedReExportSections(
       context.inputFile,
       context.cwd,
       entry.moduleSpecifier,
+      context.platformModuleSuffix,
+      context.projectConfigPath,
     )
     if (!targetFile || context.visited.has(resolve(targetFile))) continue
 
@@ -467,7 +479,13 @@ async function renderFollowedReExportSections(
     const overrides = getReExportedNameOverrides(ts, entry)
     const targetDeclaration = isDeclarationFile(targetFile)
       ? await readFile(targetFile, 'utf8')
-      : await compileDeclaration(ts, targetFile, context.cwd)
+      : await compileDeclaration(
+          ts,
+          targetFile,
+          context.cwd,
+          context.platformModuleSuffix,
+          context.projectConfigPath,
+        )
     const targetContext = {
       ...context,
       inputFile: targetFile,
