@@ -12,7 +12,7 @@ const execFile = promisify(execFileCallback)
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
-test('renders TypeScript package entries that re-export TSRX modules', async () => {
+test('renders TypeScript package entries that re-export explicitly named TSRX modules', async () => {
   const project = await createProject()
   const packageDir = join(project, 'packages', 'ui')
   const sourceDir = join(packageDir, 'src')
@@ -20,7 +20,7 @@ test('renders TypeScript package entries that re-export TSRX modules', async () 
   await installTsrxCompiler(project)
   await writeFile(
     join(sourceDir, 'index.web.ts'),
-    `export { Button } from './button.web'\n`,
+    `export { Button } from './button.web.tsrx'\n`,
   )
   await writeFile(
     join(sourceDir, 'button.web.tsrx'),

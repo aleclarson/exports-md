@@ -61,6 +61,9 @@ For `.tsrx` source entry points or local imports, install
 `tsrx.compiler` configuration. `exports-md` invokes `tsrx-tsc` with a temporary
 declaration output directory. When `target` is omitted, declaration emit uses
 ES2022; an explicit target or `lib` remains in effect.
+TypeScript entries can re-export `.tsrx` files directly, for example
+`export { View } from './View.web.tsrx'`. `exports-md` renders the emitted
+declarations, so TSRX implementation bodies are omitted.
 
 ## Options
 

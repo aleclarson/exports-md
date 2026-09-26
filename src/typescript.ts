@@ -2,7 +2,6 @@ import { existsSync } from 'node:fs'
 import { execFile as execFileCallback } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { CompilerOptions, Diagnostic } from 'typescript'
@@ -176,7 +175,11 @@ function compileWithTsrxTscAsync(
   return (async () => {
     const baseConfig = findTsConfig(inputFile)
     const baseOptions = baseConfig ? readConfigOptions(ts, baseConfig, cwd) : {}
-    const tempDir = await mkdtemp(join(tmpdir(), 'exports-md-tsrx-'))
+    // Keep the temporary config beside the project config so TSRX can resolve
+    // compiler plugins and compiler packages from the workspace.
+    const tempDir = await mkdtemp(
+      join(baseConfig ? dirname(baseConfig) : cwd, '.exports-md-tsrx-'),
+    )
     const outputDir = join(tempDir, 'declarations')
     const configPath = join(tempDir, 'tsconfig.json')
     const config = {
