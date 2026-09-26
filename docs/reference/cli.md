@@ -68,7 +68,9 @@ For TSRX entries, `exports-md` uses the nearest `tsconfig.json`, or a workspace
 config that includes the entry when there is no package config. It falls back to
 the nearest `tsconfig.base.json`. Platform entry names such as `index.web.ts`
 select matching TypeScript `moduleSuffixes` when the selected config does not
-set them.
+set them. The selected config must provide platform-specific ambient types;
+TypeScript errors other than duplicate declaration-output paths still fail
+generation.
 
 ## Options
 
